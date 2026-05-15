@@ -15,6 +15,9 @@ dependencies = [
     "ruff>=0.15.13",
     "sounddevice>=0.5.1",
     "soundfile>=0.13.1",
+    "logfire>=3.14.0",
+    "dotenv>=0.9.9",
+    "tomli-w>=1.2.0",
 ]
 
 [project.scripts]
