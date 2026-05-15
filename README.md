@@ -139,7 +139,21 @@ uv run python src/rainyasr/main.py
 brew install blackhole-2ch
 ```
 
-安装后在系统设置中将 BlackHole 设为默认输出设备，或配合多输出设备使用。
+> **注意**：通过 Homebrew 安装 BlackHole 后，**必须重启系统**才能使驱动生效。
+
+#### 配置混合输出（推荐）
+
+为了同时从 Mac 扬声器听到声音并捕获音频流到 RainyASR，需要创建一个**多输出设备（Multi-Output Device）**：
+
+1. 打开**音频 MIDI 设置**（在"启动台"搜索 "Audio MIDI Setup" 或 "音频 MIDI 设置"）
+2. 点击左下角 **+** 按钮，选择**创建多输出设备**
+3. 在右侧勾选以下两个设备：
+   - **BlackHole 2ch**（用于音频捕获）
+   - **MacBook Pro 扬声器**（或你实际使用的输出设备，用于监听）
+4. 勾选 **BlackHole 2ch 的漂移矫正**
+5. 右键点击刚创建的**多输出设备**，选择**将此设备用于声音输出**
+
+这样配置后，系统声音会同时输出到 BlackHole（供 RainyASR 捕获）和你的扬声器（供你收听），无需在系统设置中来回切换默认输出设备。
 
 ### Windows
 
