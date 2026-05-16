@@ -131,5 +131,6 @@ def get_default_sample_rate(device_id: int | None = None) -> int:
     Returns:
         Sample rate in Hz.
     """
-    dev = sd.query_devices(kind=input) if device_id is None else sd.query_devices(device_id)
-    return int(dev.get("default_samplerate", 48000))
+    dev = sd.query_devices(kind="input") if device_id is None else sd.query_devices(device_id)
+    sr = dev.get("default_samplerate")
+    return int(sr) if sr is not None else 48000
