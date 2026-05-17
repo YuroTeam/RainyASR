@@ -50,7 +50,7 @@ class AudioDeviceDetector:
         Uses pyaudiowpatch which correctly enumerates WASAPI loopback devices.
         Falls back to the default WASAPI output device as loopback source.
         """
-        import pyaudiowpatch
+        import pyaudiowpatch  # pyright: ignore[reportMissingImports]
 
         try:
             p = pyaudiowpatch.PyAudio()
