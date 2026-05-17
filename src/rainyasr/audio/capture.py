@@ -52,66 +52,78 @@ class AudioDeviceDetector:
         """
         import pyaudiowpatch
 
-        with pyaudiowpatch.PyAudio() as p:
-            wasapi_info = None
-            for i in range(p.get_host_api_count()):
-                api = p.get_host_api_info_by_index(i)
-                if "wasapi" in api["name"].lower():
-                    wasapi_info = api
-                    break
+        try:
+            p = pyaudiowpatch.PyAudio()
+        except Exception as exc:
+            msg = f"Failed to initialize PyAudio: {exc}"
+            raise NoLoopbackDeviceError(msg) from exc
 
-            if wasapi_info is None:
-                msg = "No WASAPI host API found"
-                raise NoLoopbackDeviceError(msg)
+        try:
+            with p:
+                wasapi_info = None
+                for i in range(p.get_host_api_count()):
+                    api = p.get_host_api_info_by_index(i)
+                    if "wasapi" in api["name"].lower():
+                        wasapi_info = api
+                        break
 
-            # Find the default output device name, then match its loopback
-            default_out_idx = wasapi_info["defaultOutputDevice"]
-            default_out_name = ""
-            if default_out_idx is not None:
-                default_out_name = p.get_device_info_by_index(default_out_idx)["name"]
+                if wasapi_info is None:
+                    msg = "No WASAPI host API found"
+                    raise NoLoopbackDeviceError(msg)
 
-            # Look for the loopback device matching the default output
-            for idx in range(p.get_device_count()):
-                dev = p.get_device_info_by_index(idx)
-                if dev["hostApi"] != wasapi_info["index"]:
-                    continue
-                if dev["maxInputChannels"] == 0:
-                    continue
-                if "loopback" not in dev["name"].lower():
-                    continue
-                if default_out_name and default_out_name in dev["name"]:
+                # Find the default output device name, then match its loopback
+                default_out_idx = wasapi_info["defaultOutputDevice"]
+                default_out_name = ""
+                if default_out_idx is not None and default_out_idx >= 0:
+                    default_out_name = p.get_device_info_by_index(default_out_idx)["name"]
+
+                # Look for the loopback device matching the default output
+                for idx in range(p.get_device_count()):
+                    dev = p.get_device_info_by_index(idx)
+                    if dev["hostApi"] != wasapi_info["index"]:
+                        continue
+                    if dev["maxInputChannels"] == 0:
+                        continue
+                    if "loopback" not in dev["name"].lower():
+                        continue
+                    if default_out_name and default_out_name in dev["name"]:
+                        return AudioDeviceInfo(
+                            device_id=idx,
+                            name=dev["name"],
+                            sample_rate=int(dev["defaultSampleRate"]),
+                            channels=min(dev["maxInputChannels"], 2),
+                        )
+
+                # Fallback: any loopback device
+                for idx in range(p.get_device_count()):
+                    dev = p.get_device_info_by_index(idx)
+                    if dev["hostApi"] != wasapi_info["index"]:
+                        continue
+                    if dev["maxInputChannels"] == 0:
+                        continue
+                    if "loopback" in dev["name"].lower():
+                        return AudioDeviceInfo(
+                            device_id=idx,
+                            name=dev["name"],
+                            sample_rate=int(dev["defaultSampleRate"]),
+                            channels=min(dev["maxInputChannels"], 2),
+                        )
+
+                # Fallback: open the default WASAPI output as a loopback source
+                default_out_idx = wasapi_info["defaultOutputDevice"]
+                if default_out_idx is not None and default_out_idx >= 0:
+                    dev = p.get_device_info_by_index(default_out_idx)
                     return AudioDeviceInfo(
-                        device_id=idx,
+                        device_id=default_out_idx,
                         name=dev["name"],
                         sample_rate=int(dev["defaultSampleRate"]),
-                        channels=min(dev["maxInputChannels"], 2),
+                        channels=min(dev["maxOutputChannels"], 2),
                     )
-
-            # Fallback: any loopback device
-            for idx in range(p.get_device_count()):
-                dev = p.get_device_info_by_index(idx)
-                if dev["hostApi"] != wasapi_info["index"]:
-                    continue
-                if dev["maxInputChannels"] == 0:
-                    continue
-                if "loopback" in dev["name"].lower():
-                    return AudioDeviceInfo(
-                        device_id=idx,
-                        name=dev["name"],
-                        sample_rate=int(dev["defaultSampleRate"]),
-                        channels=min(dev["maxInputChannels"], 2),
-                    )
-
-            # Fallback: open the default WASAPI output as a loopback source
-            default_out_idx = wasapi_info["defaultOutputDevice"]
-            if default_out_idx is not None:
-                dev = p.get_device_info_by_index(default_out_idx)
-                return AudioDeviceInfo(
-                    device_id=default_out_idx,
-                    name=dev["name"],
-                    sample_rate=int(dev["defaultSampleRate"]),
-                    channels=min(dev["maxOutputChannels"], 2),
-                )
+        except NoLoopbackDeviceError:
+            raise
+        except Exception as exc:
+            msg = f"No WASAPI loopback device found: {exc}"
+            raise NoLoopbackDeviceError(msg) from exc
 
         msg = (
             "No WASAPI loopback device found. "
