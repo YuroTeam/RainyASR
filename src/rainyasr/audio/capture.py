@@ -47,21 +47,72 @@ class AudioDeviceDetector:
     def _find_windows_loopback(self) -> AudioDeviceInfo:
         """Find WASAPI loopback device on Windows.
 
-        PortAudio with WASAPI exposes loopback devices as input devices
-        with 'Loopback' in their name.
+        Uses pyaudiowpatch which correctly enumerates WASAPI loopback devices.
+        Falls back to the default WASAPI output device as loopback source.
         """
-        devices = sd.query_devices()
-        for idx, dev in enumerate(devices):
-            if dev["max_input_channels"] == 0:
-                continue
-            name = dev["name"]
-            if "loopback" in name.lower():
+        import pyaudiowpatch as pyaudio_W
+
+        with pyaudio_W.PyAudio() as p:
+            wasapi_info = None
+            for i in range(p.get_host_api_count()):
+                api = p.get_host_api_info_by_index(i)
+                if "wasapi" in api["name"].lower():
+                    wasapi_info = api
+                    break
+
+            if wasapi_info is None:
+                msg = "No WASAPI host API found"
+                raise NoLoopbackDeviceError(msg)
+
+            # Find the default output device name, then match its loopback
+            default_out_idx = wasapi_info["defaultOutputDevice"]
+            default_out_name = ""
+            if default_out_idx is not None:
+                default_out_name = p.get_device_info_by_index(default_out_idx)["name"]
+
+            # Look for the loopback device matching the default output
+            for idx in range(p.get_device_count()):
+                dev = p.get_device_info_by_index(idx)
+                if dev["hostApi"] != wasapi_info["index"]:
+                    continue
+                if dev["maxInputChannels"] == 0:
+                    continue
+                if "loopback" not in dev["name"].lower():
+                    continue
+                if default_out_name and default_out_name in dev["name"]:
+                    return AudioDeviceInfo(
+                        device_id=idx,
+                        name=dev["name"],
+                        sample_rate=int(dev["defaultSampleRate"]),
+                        channels=min(dev["maxInputChannels"], 2),
+                    )
+
+            # Fallback: any loopback device
+            for idx in range(p.get_device_count()):
+                dev = p.get_device_info_by_index(idx)
+                if dev["hostApi"] != wasapi_info["index"]:
+                    continue
+                if dev["maxInputChannels"] == 0:
+                    continue
+                if "loopback" in dev["name"].lower():
+                    return AudioDeviceInfo(
+                        device_id=idx,
+                        name=dev["name"],
+                        sample_rate=int(dev["defaultSampleRate"]),
+                        channels=min(dev["maxInputChannels"], 2),
+                    )
+
+            # Fallback: open the default WASAPI output as a loopback source
+            default_out_idx = wasapi_info["defaultOutputDevice"]
+            if default_out_idx is not None:
+                dev = p.get_device_info_by_index(default_out_idx)
                 return AudioDeviceInfo(
-                    device_id=idx,
-                    name=name,
-                    sample_rate=int(dev.get("default_samplerate", 48000)),
-                    channels=min(dev["max_input_channels"], 2),
+                    device_id=default_out_idx,
+                    name=dev["name"],
+                    sample_rate=int(dev["defaultSampleRate"]),
+                    channels=min(dev["maxOutputChannels"], 2),
                 )
+
         msg = (
             "No WASAPI loopback device found. "
             "Ensure you are using Windows Vista+ and PortAudio is built with WASAPI support."
