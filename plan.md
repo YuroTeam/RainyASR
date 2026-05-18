@@ -96,9 +96,9 @@ RingBuffer (read) ──> WAV ──> API ──> Qt Signal ──> GUI update
 | `src/rainyasr/__init__.py` | CREATE | ✅ | 包标识 |
 | `src/rainyasr/config.py` | CREATE | ✅ | Pydantic 配置模型，含 API Key、音频参数、样式 |
 | `.env.example` | CREATE | ✅ | 环境变量模板 |
-| `config.toml` | CREATE | ✅ | 用户偏好配置（TOML），当前位于项目根目录 |
+| `config/config.toml` | CREATE | ✅ | 用户偏好配置（TOML），位于项目根目录 `config/` 子文件夹下 |
 | `src/rainyasr/audio/capture.py` | CREATE | ✅ | 跨平台系统音频检测（macOS/Linux: sounddevice，Windows: pyaudiowpatch） |
-| `src/rainyasr/audio/ring_buffer.py` | CREATE | ⏳ | 线程安全环形音频缓冲区 |
+| `src/rainyasr/audio/ring_buffer.py` | CREATE | ✅ | 线程安全环形音频缓冲区 |
 | `src/rainyasr/audio/wav.py` | CREATE | ⏳ | 内存 WAV 封装（BytesIO） |
 | `src/rainyasr/audio/__init__.py` | CREATE | ✅ | 音频模块导出 |
 | `src/rainyasr/providers/base.py` | CREATE | ⏳ | ASRProvider + TranslationProvider 抽象基类 |
@@ -111,10 +111,12 @@ RingBuffer (read) ──> WAV ──> API ──> Qt Signal ──> GUI update
 | `src/rainyasr/worker.py` | CREATE | ⏳ | 后台录音+API 调度工作协程 |
 | `src/rainyasr/app.py` | CREATE | ⏳ | QApplication + qasync 事件循环初始化 |
 | `src/rainyasr/main.py` | CREATE | ⏳ | 程序入口（CLI + GUI 启动） |
+| `src/rainyasr/__main__.py` | CREATE | ⏳ | 支持 `python -m rainyasr` 入口 |
 | `src/main.py` | DELETE | ✅ | 空文件已删除 |
 | `tests/test_capture.py` | CREATE | ✅ | 跨平台音频设备检测测试（按平台 skip） |
 | `.github/workflows/test.yml` | CREATE | ✅ | GitHub Actions CI（ruff + pytest，三平台） |
 | `.claude/plans/rainyasr.plan.md` | CREATE | ✅ | 本实施计划 |
+| `scripts/` | CREATE | ⏳ | 临时验证脚本目录（Task 6/8/9/12） |
 
 ---
 
@@ -132,7 +134,7 @@ RingBuffer (read) ──> WAV ──> API ──> Qt Signal ──> GUI update
 ### Task 2: 配置模型（config.py + config.toml） ✅
 - **Action**: 用 Pydantic + python-dotenv + TOML 定义双层配置：
   - **`EnvConfig`**（敏感信息，从 `.env` 读取）：`DASHSCOPE_API_KEY`, `DEEPSEEK_API_KEY`, `DASHSCOPE_BASE_URL`, `DEEPSEEK_BASE_URL`, `ASR_MODEL`, `TRANSLATE_MODEL`, `LOGFIRE_TOKEN`
-  - **`AppConfig`**（用户偏好，持久化到项目根目录 `config/config.toml`）：
+  - **`AppConfig`**（用户偏好，持久化到 `config/config.toml`，即项目根目录下的 `config/` 文件夹）：
     - 音频：`sample_rate=16000`, `channels=1`, `window_size_sec=6.0`, `step_sec=3.0`, `max_concurrent_requests=2`
     - 字幕样式：`font_family`, `font_size`, `text_color`, `bg_opacity`, `bilingual_mode`
     - 快捷键：`toggle_hotkey = "ctrl+shift+r"`
@@ -182,7 +184,7 @@ RingBuffer (read) ──> WAV ──> API ──> Qt Signal ──> GUI update
 - **Validate**:
   ```bash
   uv run python -m pytest tests/test_ring_buffer.py -v
-  # 测试：单线程读写一致性、多线程并发安全、边界条件
+  # 测试：单线程读写一致性、多线程并发安全、边界条件（含超大写入截断、写指针回绕）
   ```
 
 ### Task 5: 内存 WAV 封装（wav.py）
@@ -259,8 +261,8 @@ RingBuffer (read) ──> WAV ──> API ──> Qt Signal ──> GUI update
   ```
 
 ### Task 10: 无边框悬浮字幕窗口（subtitle_window.py）
-- **Action**: `SubtitleWindow(QFramelessWindow)`：
-  - 窗口标志：`FramelessWindowHint | WindowStaysOnTopHint | WindowDoesNotHaveShadow | Tool`
+- **Action**: `SubtitleWindow(QWidget)`：
+  - 窗口标志：`Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotHaveShadow | Qt.Tool`
   - 属性：`WA_TranslucentBackground`, `WA_TransparentForMouseEvents`（可选）
   - 显示内容：两行 QLabel（原文 + 译文，或仅译文）
   - 鼠标拖拽：重写 `mousePressEvent` / `mouseMoveEvent`
@@ -298,13 +300,12 @@ RingBuffer (read) ──> WAV ──> API ──> Qt Signal ──> GUI update
   - 持有 `AudioRingBuffer`, `ASRProvider`, `TranslationProvider`, `SubtitleWindow`
   - `start()`：启动 `sounddevice.InputStream` 回调写入 ring buffer；启动 `asyncio.Task` 每 3 秒调度一次 `process_window()`
   - `process_window()`：
-    1. 检查并发数（`< max_concurrent_requests`）
+    1. 用 `asyncio.Semaphore(max_concurrent_requests)` 控制并发，获取不到直接丢弃当前切片
     2. 从 ring buffer 读取最近 6 秒音频
     3. encode WAV
-    4. 并发数 +1，调用 `asr.transcribe()`
+    4. 在 Semaphore 保护内调用 `asr.transcribe()`
     5. 如果识别结果非空，调用 `translate.translate(history=recent_2)`
     6. 通过 Qt Signal 发射 `(original, translated)` 给 GUI
-    7. 并发数 -1
   - `stop()`：停止录音流，取消协程任务
   - **日志**：使用 `logfire` 记录关键链路事件（音频切片、ASR 请求/响应、翻译请求/响应、异常堆栈），便于线上问题排查
 - **Mirror**: asyncio + Qt Signal 跨线程通信
@@ -321,7 +322,7 @@ RingBuffer (read) ──> WAV ──> API ──> Qt Signal ──> GUI update
   - 切片参数（窗口大小、步进间隔，带合理范围限制）
   - 字幕样式（字体选择、大小滑动条、颜色选择器、透明度滑动条）
   - 快捷键绑定（QKeySequenceEdit）
-  - 保存时调用 `AppConfig.save()`，权限 0o600
+  - 保存时调用 `AppConfig.save()`；**待补充**：`save()` 需设置文件权限 `0o600`（当前实现未包含）
 - **Mirror**: PySide6 表单布局
 - **Validate**: 手动测试 UI 交互
 
