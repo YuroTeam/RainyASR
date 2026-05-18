@@ -1,9 +1,13 @@
 [audio]
 sample_rate = 16000
 channels = 1
-window_size_sec = 6.0
-step_sec = 3.0
-max_concurrent_requests = 2
+frame_ms = 100
+audio_queue_max_frames = 100
+
+[asr]
+asr_model = "qwen3-asr-flash-realtime"
+asr_format = "pcm"
+asr_language = "auto"
 
 [subtitle]
 font_family = "PingFang SC, Microsoft YaHei, sans-serif"
