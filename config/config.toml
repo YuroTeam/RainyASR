@@ -1,0 +1,19 @@
+[audio]
+sample_rate = 16000
+channels = 1
+window_size_sec = 6.0
+step_sec = 3.0
+max_concurrent_requests = 2
+
+[subtitle]
+font_family = "PingFang SC, Microsoft YaHei, sans-serif"
+font_size = 24
+text_color = "#FFFFFF"
+bg_opacity = 80
+bilingual_mode = true
+
+[hotkey]
+toggle_hotkey = "ctrl+shift+r"
+
+[language]
+target_lang = "zh"

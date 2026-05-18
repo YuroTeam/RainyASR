@@ -139,15 +139,35 @@ uv run python src/rainyasr/main.py
 brew install blackhole-2ch
 ```
 
-安装后在系统设置中将 BlackHole 设为默认输出设备，或配合多输出设备使用。
+> **注意**：通过 Homebrew 安装 BlackHole 后，**必须重启系统**才能使驱动生效。
+
+#### 配置混合输出（推荐）
+
+为了同时从 Mac 扬声器听到声音并捕获音频流到 RainyASR，需要创建一个**多输出设备（Multi-Output Device）**：
+
+1. 打开**音频 MIDI 设置**（在"启动台"搜索 "Audio MIDI Setup" 或 "音频 MIDI 设置"）
+2. 点击左下角 **+** 按钮，选择**创建多输出设备**
+3. 在右侧勾选以下两个设备：
+   - **BlackHole 2ch**（用于音频捕获）
+   - **MacBook Pro 扬声器**（或你实际使用的输出设备，用于监听）
+4. 勾选 **BlackHole 2ch 的漂移矫正**
+5. 右键点击刚创建的**多输出设备**，选择**将此设备用于声音输出**
+
+这样配置后，系统声音会同时输出到 BlackHole（供 RainyASR 捕获）和你的扬声器（供你收听），无需在系统设置中来回切换默认输出设备。
 
 ### Windows
 
-使用 WASAPI loopback 捕获系统音频，无需额外驱动。
+使用 WASAPI loopback 捕获系统音频，**无需额外安装驱动**。
+
+WASAPI（Windows Audio Session API）loopback 是 Windows 内置功能，RainyASR 会自动检测系统中的 Loopback 输入设备并捕获。只要系统音频正常输出，即可直接使用，无需配置虚拟音频设备。
+
+如果检测不到 Loopback 设备，请检查系统是否使用 WASAPI 作为默认音频后端（绝大多数 Windows 系统默认即是）。
 
 ### Linux
 
-需要安装 PortAudio 开发库：
+#### 1. 安装 PortAudio 开发库
+
+`sounddevice` 依赖 PortAudio，编译时需要系统头文件：
 
 ```bash
 # Debian / Ubuntu
@@ -155,7 +175,33 @@ sudo apt-get install portaudio19-dev
 
 # Fedora
 sudo dnf install portaudio-devel
+
+# Arch Linux
+sudo pacman -S portaudio
 ```
+
+#### 2. 音频捕获方式
+
+RainyASR 在 Linux 上按以下优先级检测音频源：
+
+1. **PulseAudio / PipeWire Monitor**（推荐）：设备名通常包含 "Monitor"，可直接捕获系统音频且不影响正常播放
+2. **默认输入设备**（Fallback）：未找到 Monitor 时，使用系统默认输入设备
+
+大多数现代发行版（Ubuntu 22.04+、Fedora、Arch 等）默认使用 PipeWire 或 PulseAudio，播放音频时会自动创建 Monitor 设备，无需手动配置。
+
+#### 3. 同时输出到扬声器和录制（可选）
+
+如果你的系统没有自动创建 Monitor 设备，可以通过 `pavucontrol` 手动将应用音频同时路由到 Monitor：
+
+```bash
+# 安装 PulseAudio 音量控制
+sudo apt-get install pavucontrol   # Debian / Ubuntu
+sudo dnf install pavucontrol       # Fedora
+```
+
+打开 **pavucontrol** → **播放** 标签页 → 选择目标应用 → 将其输出设备改为 **"Monitor of XXX"**。
+
+> **注意**：Linux 的 Monitor 设备本质就是系统音频的镜像，通常无需像 macOS 那样手动创建"混合输出"。如果程序启动后提示找不到 Monitor，确保有音频正在播放（如播放视频或音乐），此时 PipeWire/PulseAudio 才会创建对应的 Monitor 源。
 
 ## License
 

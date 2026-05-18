@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "dashscope>=1.22.0",
-    "openai>=2.36.0",
     "pre-commit>=4.6.0",
     "pydantic>=2.11.0",
     "pynput>=1.8.0",
@@ -15,6 +14,13 @@ dependencies = [
     "ruff>=0.15.13",
     "sounddevice>=0.5.1",
     "soundfile>=0.13.1",
+    "logfire>=3.14.0",
+    "dotenv>=0.9.9",
+    "tomli-w>=1.2.0",
+    "pyaudio>=0.2.14; sys_platform == 'win32'",
+    "pyaudiowpatch>=0.2.12; sys_platform == 'win32'",
+    "soundcard>=0.4.6",
+    "openai>=2.37.0",
 ]
 
 [project.scripts]
@@ -52,6 +58,9 @@ convention = "google"
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[dependency-groups]
+dev = ["pytest>=8.0.0"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
