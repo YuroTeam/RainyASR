@@ -221,3 +221,4 @@ __marimo__/
 # AI cache
 .claude
 .codex
+.agents

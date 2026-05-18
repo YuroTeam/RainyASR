@@ -55,6 +55,10 @@ class AudioRingBuffer:
             if self.capacity == 0:
                 return
 
+            if n > self.capacity:
+                samples = samples[-self.capacity :]
+                n = self.capacity
+
             # Write in at most two contiguous chunks
             first_chunk = min(n, self.capacity - self._write_index)
             self._buffer[self._write_index : self._write_index + first_chunk] = samples[
@@ -66,7 +70,7 @@ class AudioRingBuffer:
                 self._buffer[:second_chunk] = samples[first_chunk:]
                 self._write_index = second_chunk
             else:
-                self._write_index += first_chunk
+                self._write_index = (self._write_index + first_chunk) % self.capacity
 
             self._valid_count = min(self._valid_count + n, self.capacity)
 

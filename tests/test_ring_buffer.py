@@ -120,6 +120,25 @@ class TestBoundaryConditions:
         result = buf.read_last_n_seconds(0.4)  # 4 samples
         np.testing.assert_array_equal(result, np.array([11, 12, 13, 14], dtype=np.float32))
 
+    def test_exact_fill_from_nonzero_index_wraps_write_index(self) -> None:
+        buf = AudioRingBuffer(10, max_duration=1.0)  # capacity = 10
+
+        buf.write(np.arange(7, dtype=np.float32))
+        buf.write(np.arange(7, 10, dtype=np.float32))
+
+        assert buf._write_index == 0
+        result = buf.read_last_n_seconds(1.0)
+        np.testing.assert_array_equal(result, np.arange(10, dtype=np.float32))
+
+    def test_oversized_write_keeps_newest_samples(self) -> None:
+        buf = AudioRingBuffer(10, max_duration=1.0)  # capacity = 10
+        samples = np.arange(25, dtype=np.float32)
+
+        buf.write(samples)
+
+        result = buf.read_last_n_seconds(1.0)
+        np.testing.assert_array_equal(result, samples[-10:])
+
     def test_zero_capacity(self) -> None:
         buf = AudioRingBuffer(SAMPLE_RATE, max_duration=0.0)
         buf.write(np.array([1.0, 2.0], dtype=np.float32))
