@@ -13,7 +13,7 @@ from typing import Literal
 
 import tomli_w
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 load_dotenv()
 
@@ -24,22 +24,20 @@ def _config_toml_path() -> Path:
 
 
 class AudioConfig(BaseModel):
-    """Audio capture and processing settings."""
+    """Audio capture and processing settings for real-time streaming."""
 
     sample_rate: int = Field(default=16000, ge=8000, le=48000)
     channels: int = Field(default=1, ge=1, le=2)
-    window_size_sec: float = Field(default=6.0, ge=1.0, le=30.0)
-    step_sec: float = Field(default=3.0, ge=0.5, le=10.0)
-    max_concurrent_requests: int = Field(default=2, ge=1, le=10)
+    frame_ms: int = Field(default=100, ge=20, le=500)
+    audio_queue_max_frames: int = Field(default=100, ge=10, le=1000)
 
-    @field_validator("step_sec")
-    @classmethod
-    def step_less_than_window(cls, v: float, info) -> float:  # noqa: ANN001
-        """Ensure step is less than or equal to window size."""
-        if v > info.data.get("window_size_sec", 6.0):
-            msg = "step_sec must be <= window_size_sec"
-            raise ValueError(msg)
-        return v
+
+class ASRConfig(BaseModel):
+    """Real-time ASR settings."""
+
+    asr_model: str = Field(default="qwen3-asr-flash-realtime")
+    asr_format: str = Field(default="pcm")
+    asr_language: str = Field(default="auto")
 
 
 class SubtitleConfig(BaseModel):
@@ -68,6 +66,7 @@ class AppConfig(BaseModel):
     """Root configuration model."""
 
     audio: AudioConfig = Field(default_factory=AudioConfig)
+    asr: ASRConfig = Field(default_factory=ASRConfig)
     subtitle: SubtitleConfig = Field(default_factory=SubtitleConfig)
     hotkey: HotkeyConfig = Field(default_factory=HotkeyConfig)
     language: LanguageConfig = Field(default_factory=LanguageConfig)
@@ -123,7 +122,7 @@ class EnvConfig:
 
     @staticmethod
     def asr_model() -> str:
-        return os.getenv("ASR_MODEL", "qwen3-asr-flash-filetrans")
+        return os.getenv("ASR_MODEL", "qwen3-asr-flash-realtime")
 
     @staticmethod
     def translate_model() -> str:
