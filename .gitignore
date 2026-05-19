@@ -225,3 +225,4 @@ __marimo__/
 
 # RainyASR generated audio files
 audio_test.wav
+.DS_Store
