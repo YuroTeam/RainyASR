@@ -15,7 +15,15 @@ import tomli_w
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-load_dotenv()
+_dotenv_loaded = False
+
+
+def load_env_file() -> None:
+    """Load .env once, when environment-backed config is first accessed."""
+    global _dotenv_loaded
+    if not _dotenv_loaded:
+        load_dotenv()
+        _dotenv_loaded = True
 
 
 def _config_toml_path() -> Path:
@@ -106,28 +114,35 @@ class EnvConfig:
 
     @staticmethod
     def dashscope_api_key() -> str:
+        load_env_file()
         return os.getenv("DASHSCOPE_API_KEY", "")
 
     @staticmethod
     def deepseek_api_key() -> str:
+        load_env_file()
         return os.getenv("DEEPSEEK_API_KEY", "")
 
     @staticmethod
     def dashscope_base_url() -> str:
+        load_env_file()
         return os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/api/v1")
 
     @staticmethod
     def deepseek_base_url() -> str:
+        load_env_file()
         return os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 
     @staticmethod
     def asr_model() -> str:
+        load_env_file()
         return os.getenv("ASR_MODEL", "qwen3-asr-flash-realtime")
 
     @staticmethod
     def translate_model() -> str:
+        load_env_file()
         return os.getenv("TRANSLATE_MODEL", "deepseek-chat")
 
     @staticmethod
     def logfire_token() -> str | None:
+        load_env_file()
         return os.getenv("LOGFIRE_TOKEN")

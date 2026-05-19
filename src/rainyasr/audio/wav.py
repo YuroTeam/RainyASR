@@ -7,18 +7,62 @@ import io
 import numpy as np
 import soundfile as sf
 
+DEFAULT_GAIN: float = 8.0
+DEFAULT_HEADROOM: float = 0.95
 
-def float32_to_pcm16(audio_array: np.ndarray) -> bytes:
+
+def peak_normalize(samples: np.ndarray, headroom: float = DEFAULT_HEADROOM) -> np.ndarray:
+    """Scale samples so that the absolute peak matches ``headroom``.
+
+    This is a peak limiter: if the signal is already below headroom,
+    it is returned unchanged.  If it exceeds headroom, the *entire*
+    waveform is scaled down uniformly, which avoids the distortion
+    caused by hard-clipping.
+
+    Args:
+        samples: Float array of any shape.
+        headroom: Target peak level (0.0–1.0).  Default 0.95 leaves
+            a small safety margin before the PCM16 full-scale limit.
+
+    Returns:
+        Scaled array with the same shape and dtype as *samples*.
+    """
+    if samples.size == 0:
+        return samples
+    peak = np.max(np.abs(samples))
+    if peak > headroom:
+        return samples / peak * headroom
+    return samples
+
+
+def float32_to_pcm16(
+    audio_array: np.ndarray,
+    *,
+    gain: float = 1.0,
+    headroom: float = DEFAULT_HEADROOM,
+) -> bytes:
     """Convert float32 audio to 16-bit little-endian PCM bytes.
+
+    If gain is applied and the amplified signal exceeds *headroom*,
+    a peak limiter scales the entire waveform down uniformly before
+    the final clip to ``[-1.0, 1.0]``.  This avoids the audible
+    distortion of hard-clipping.
 
     Args:
         audio_array: 1-D array of float32 samples in range [-1, 1].
-            Values outside this range are clipped.
+        gain: Linear gain to apply before conversion.  Default 1.0.
+        headroom: Peak limiter threshold (0.0–1.0).  Default 0.95.
 
     Returns:
         PCM16 bytes, little-endian.
     """
-    clipped = np.clip(np.ravel(audio_array), -1.0, 1.0)
+    samples = np.ravel(audio_array)
+    if samples.size == 0:
+        return b""
+    samples = samples * gain
+    if gain > 1.0:
+        samples = peak_normalize(samples, headroom=headroom)
+    clipped = np.clip(samples, -1.0, 1.0)
     pcm = np.rint(clipped * 32767.0).astype("<i2")
     return pcm.tobytes()
 
