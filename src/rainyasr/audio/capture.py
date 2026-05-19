@@ -7,7 +7,6 @@ from dataclasses import dataclass
 
 import sounddevice as sd
 
-
 class NoLoopbackDeviceError(RuntimeError):
     """Raised when no suitable loopback device is found on the system."""
 
@@ -152,15 +151,66 @@ class AudioDeviceDetector:
         raise NoLoopbackDeviceError(msg)
 
     def _find_linux_loopback(self) -> AudioDeviceInfo:
-        """Find PulseAudio monitor source on Linux.
-
-        Falls back to the default input device if no monitor is found.
+        """Find PulseAudio/PipeWire monitor source on Linux.
+    Uses pactl to find the monitor source for the default output sink.
+    Does not fall back to microphones, because that would silently capture
+    the wrong audio source.
         """
+        import os
+        import subprocess   
+
+        def run_pactl(args: list[str]) -> str | None:
+            try:
+                result = subprocess.run(
+                    ["pactl"] + args,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                )
+            except (FileNotFoundError,subprocess.CalledProcessError,subprocess.TimeoutExpired):
+                return None
+            return result.stdout.strip()
+        
+        def source_exists(source_name: str) -> bool:
+            sources = run_pactl(["list", "short","sources"])
+            if not sources:
+                return False    
+            for line in sources.splitlines():
+                parts = line.split("\t")
+                if len(parts) >= 2 and parts[1] == source_name:
+                    return True
+            return False
+        
+        monitor_name: str | None = None
+        
+        default_sink = run_pactl(["get-default-sink"])
+        if default_sink:
+            candidate = f"{default_sink}.monitor"
+            if source_exists(candidate):
+                monitor_name = candidate
+
         devices = sd.query_devices()
-        for idx, dev in enumerate(devices):
+
+        if monitor_name:
+            os.environ["PULSE_SOURCE"] = monitor_name
+            for idx, dev in enumerate(devices):
+                if dev["max_input_channels"] == 0:
+                    continue
+                name = str(dev["name"]).lower()
+
+                 # First choice: ALSA pulse plugin, because PULSE_SOURCE is for PulseAudio.
+                if name == "pulse":
+                    return AudioDeviceInfo(
+                        device_id=idx,
+                        name=monitor_name,
+                        sample_rate=48000,
+                        channels=min(dev["max_input_channels"], 2),
+                    )
+        for idx , dev in enumerate(devices):
             if dev["max_input_channels"] == 0:
                 continue
-            name = dev["name"]
+            name = str(dev["name"])
             if "monitor" in name.lower():
                 return AudioDeviceInfo(
                     device_id=idx,
@@ -168,21 +218,13 @@ class AudioDeviceDetector:
                     sample_rate=int(dev.get("default_samplerate", 48000)),
                     channels=min(dev["max_input_channels"], 2),
                 )
-        try:
-            default_input = sd.query_devices(kind="input")
-            default_idx = sd.default.device[0]
-            if default_idx is None:
-                msg = "No default input device available"
-                raise NoLoopbackDeviceError(msg)
-            return AudioDeviceInfo(
-                device_id=default_idx,
-                name=default_input["name"],
-                sample_rate=int(default_input.get("default_samplerate", 48000)),
-                channels=min(default_input["max_input_channels"], 2),
-            )
-        except sd.PortAudioError as exc:
-            msg = f"No suitable audio device found: {exc}"
-            raise NoLoopbackDeviceError(msg) from exc
+
+        msg = (
+        "No Linux loopback monitor source found. "
+        "PulseAudio/PipeWire monitor may exist in pactl, but sounddevice did not expose "
+        "a usable pulse/pipewire input device. Refusing to fall back to microphone."
+    )
+        raise NoLoopbackDeviceError(msg)
 
 
 def get_default_sample_rate(device_id: int | None = None) -> int:
