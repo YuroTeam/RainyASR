@@ -222,3 +222,6 @@ __marimo__/
 .claude
 .codex
 .agents
+
+# RainyASR generated audio files
+audio_test.wav

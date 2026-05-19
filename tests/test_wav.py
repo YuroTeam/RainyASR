@@ -7,14 +7,25 @@ import io
 import numpy as np
 import soundfile as sf
 
-from rainyasr.audio.wav import encode_wav, float32_to_pcm16
+from rainyasr.audio.wav import (
+    encode_wav,
+    float32_to_pcm16,
+    peak_normalize,
+)
 
 
-class TestPcm16Encoding:
+class TestPcm16EncodingNoGain:
+    """Tests with unit gain to verify basic PCM conversion."""
+
     def test_zero_returns_silence(self) -> None:
         data = np.zeros(10, dtype=np.float32)
         pcm = float32_to_pcm16(data)
         assert pcm == b"\x00" * 20
+
+    def test_empty_input_returns_empty_bytes(self) -> None:
+        data = np.array([], dtype=np.float32)
+        pcm = float32_to_pcm16(data)
+        assert pcm == b""
 
     def test_positive_one_maps_to_32767(self) -> None:
         data = np.array([1.0], dtype=np.float32)
@@ -72,6 +83,52 @@ class TestPcm16Encoding:
         # Decode back to float32
         decoded = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32767.0
         np.testing.assert_allclose(decoded, data, atol=1e-3)
+
+
+class TestPcm16EncodingWithGain:
+    """Tests for explicit gain and peak limiter behaviour."""
+
+    def test_explicit_gain_is_applied(self) -> None:
+        data = np.array([0.5], dtype=np.float32)
+        pcm = float32_to_pcm16(data, gain=8.0)
+        # 0.5 * 8.0 = 4.0, which exceeds headroom 0.95,
+        # so peak limiter scales to 0.95, then clip -> 31129
+        decoded = int.from_bytes(pcm[:2], "little", signed=True)
+        # Should be ~0.95 * 32767 = 31128.65 -> 31129
+        assert decoded == 31129
+
+    def test_low_level_signal_gets_boosted(self) -> None:
+        data = np.array([0.01], dtype=np.float32)  # very quiet
+        pcm = float32_to_pcm16(data, gain=8.0)
+        decoded = int.from_bytes(pcm[:2], "little", signed=True)
+        # 0.01 * 8.0 = 0.08 -> 0.08 * 32767 = 2621.36 -> 2621
+        assert decoded == 2621
+
+    def test_gain_with_custom_value(self) -> None:
+        data = np.array([0.1], dtype=np.float32)
+        pcm = float32_to_pcm16(data, gain=4.0)
+        decoded = int.from_bytes(pcm[:2], "little", signed=True)
+        # 0.1 * 4.0 = 0.4 -> 0.4 * 32767 = 13106.8 -> 13107
+        assert decoded == 13107
+
+
+class TestPeakNormalize:
+    def test_no_change_when_below_headroom(self) -> None:
+        data = np.array([0.3, 0.5, 0.1], dtype=np.float32)
+        result = peak_normalize(data)
+        np.testing.assert_array_equal(result, data)
+
+    def test_scales_down_when_above_headroom(self) -> None:
+        data = np.array([0.5, 1.0, 0.5], dtype=np.float32)
+        result = peak_normalize(data)
+        # Peak is 1.0, headroom is 0.95, so scale by 0.95
+        expected = np.array([0.475, 0.95, 0.475], dtype=np.float32)
+        np.testing.assert_allclose(result, expected, atol=1e-6)
+
+    def test_preserves_shape(self) -> None:
+        data = np.array([[0.6, 1.2], [0.3, 0.9]], dtype=np.float32)
+        result = peak_normalize(data)
+        assert result.shape == data.shape
 
 
 class TestWavEncoding:
