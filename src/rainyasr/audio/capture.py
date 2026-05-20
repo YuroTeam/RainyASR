@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import sounddevice as sd
 
+
 class NoLoopbackDeviceError(RuntimeError):
     """Raised when no suitable loopback device is found on the system."""
 
@@ -152,12 +153,12 @@ class AudioDeviceDetector:
 
     def _find_linux_loopback(self) -> AudioDeviceInfo:
         """Find PulseAudio/PipeWire monitor source on Linux.
-    Uses pactl to find the monitor source for the default output sink.
-    Does not fall back to microphones, because that would silently capture
-    the wrong audio source.
+        Uses pactl to find the monitor source for the default output sink.
+        Does not fall back to microphones, because that would silently capture
+        the wrong audio source.
         """
         import os
-        import subprocess   
+        import subprocess
 
         def run_pactl(args: list[str]) -> str | None:
             try:
@@ -168,22 +169,22 @@ class AudioDeviceDetector:
                     text=True,
                     timeout=2,
                 )
-            except (FileNotFoundError,subprocess.CalledProcessError,subprocess.TimeoutExpired):
+            except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
                 return None
             return result.stdout.strip()
-        
+
         def source_exists(source_name: str) -> bool:
-            sources = run_pactl(["list", "short","sources"])
+            sources = run_pactl(["list", "short", "sources"])
             if not sources:
-                return False    
+                return False
             for line in sources.splitlines():
                 parts = line.split("\t")
                 if len(parts) >= 2 and parts[1] == source_name:
                     return True
             return False
-        
+
         monitor_name: str | None = None
-        
+
         default_sink = run_pactl(["get-default-sink"])
         if default_sink:
             candidate = f"{default_sink}.monitor"
@@ -199,7 +200,7 @@ class AudioDeviceDetector:
                     continue
                 name = str(dev["name"]).lower()
 
-                 # First choice: ALSA pulse plugin, because PULSE_SOURCE is for PulseAudio.
+                # First choice: ALSA pulse plugin, because PULSE_SOURCE is for PulseAudio.
                 if name == "pulse":
                     return AudioDeviceInfo(
                         device_id=idx,
@@ -207,7 +208,7 @@ class AudioDeviceDetector:
                         sample_rate=48000,
                         channels=min(dev["max_input_channels"], 2),
                     )
-        for idx , dev in enumerate(devices):
+        for idx, dev in enumerate(devices):
             if dev["max_input_channels"] == 0:
                 continue
             name = str(dev["name"])
@@ -220,10 +221,10 @@ class AudioDeviceDetector:
                 )
 
         msg = (
-        "No Linux loopback monitor source found. "
-        "PulseAudio/PipeWire monitor may exist in pactl, but sounddevice did not expose "
-        "a usable pulse/pipewire input device. Refusing to fall back to microphone."
-    )
+            "No Linux loopback monitor source found. "
+            "PulseAudio/PipeWire monitor may exist in pactl, but sounddevice did not expose "
+            "a usable pulse/pipewire input device. Refusing to fall back to microphone."
+        )
         raise NoLoopbackDeviceError(msg)
 
 
