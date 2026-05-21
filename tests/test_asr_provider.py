@@ -122,6 +122,36 @@ class TestEvents:
         assert events[0] == TranscriptEvent(text="hello", is_final=False)
 
     @pytest.mark.asyncio
+    async def test_yields_partial_event_with_stash(self, provider: QwenRealtimeASRProvider) -> None:
+        mock_ws = _MockWebSocket(
+            [
+                json.dumps(
+                    {
+                        "type": "conversation.item.input_audio_transcription.text",
+                        "text": "",
+                        "stash": "draft",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "conversation.item.input_audio_transcription.text",
+                        "text": "hello",
+                        "stash": " world",
+                    }
+                ),
+            ]
+        )
+        provider._ws = mock_ws
+
+        events = []
+        async for evt in provider.events():
+            events.append(evt)
+
+        assert len(events) == 2
+        assert events[0] == TranscriptEvent(text="draft", is_final=False)
+        assert events[1] == TranscriptEvent(text="hello world", is_final=False)
+
+    @pytest.mark.asyncio
     async def test_yields_final_event(self, provider: QwenRealtimeASRProvider) -> None:
         mock_ws = _MockWebSocket(
             [
@@ -176,9 +206,9 @@ class TestStop:
     async def test_sends_finish_and_closes(self, provider: QwenRealtimeASRProvider) -> None:
         mock_ws = _MockWebSocket()
         provider._ws = mock_ws
+        provider._session_finished.set()
 
-        with patch("rainyasr.providers.asr.asyncio.sleep", AsyncMock()):
-            await provider.stop()
+        await provider.stop()
 
         call_args = mock_ws.send.call_args[0][0]
         data = json.loads(call_args)

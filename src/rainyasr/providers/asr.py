@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -20,8 +21,9 @@ from rainyasr.providers.base import (
 
 _DASHSCOPE_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
 
-# Grace period after session.finish to let the server send final transcripts.
-_FINISH_GRACE_PERIOD = 1.0  # seconds
+# Maximum time to wait for the server to send session.finished after we
+# emit session.finish.
+_SESSION_FINISH_TIMEOUT = 5.0  # seconds
 
 
 class QwenRealtimeASRProvider(RealtimeASRProvider):
@@ -50,6 +52,7 @@ class QwenRealtimeASRProvider(RealtimeASRProvider):
         self._language = language
         self._ws: websockets.WebSocketClientProtocol | None = None
         self._closing = False
+        self._session_finished = asyncio.Event()
 
     @staticmethod
     def _generate_event_id() -> str:
@@ -122,14 +125,20 @@ class QwenRealtimeASRProvider(RealtimeASRProvider):
                 event_type = data.get("type", "")
 
                 if event_type == "conversation.item.input_audio_transcription.text":
+                    # Realtime preview: concatenate committed text with draft stash.
                     text = data.get("text", "")
-                    if text:
-                        yield TranscriptEvent(text=text, is_final=False)
+                    stash = data.get("stash", "")
+                    combined = text + stash
+                    if combined:
+                        yield TranscriptEvent(text=combined, is_final=False)
 
                 elif event_type == "conversation.item.input_audio_transcription.completed":
                     text = data.get("transcript", "")
                     if text:
                         yield TranscriptEvent(text=text, is_final=True)
+
+                elif event_type == "session.finished":
+                    self._session_finished.set()
 
         except ConnectionClosed as exc:
             if not self._closing:
@@ -138,23 +147,32 @@ class QwenRealtimeASRProvider(RealtimeASRProvider):
 
     async def stop(self) -> None:
         """Signal end-of-stream and close the connection gracefully."""
-        if self._ws is not None:
-            self._closing = True
-            try:
-                finish_event = {
-                    "event_id": self._generate_event_id(),
-                    "type": "session.finish",
-                }
-                await self._send_json(finish_event)
-                # Allow the server time to emit final transcripts before we
-                # tear down the socket.
-                await asyncio.sleep(_FINISH_GRACE_PERIOD)
-                await self._ws.close()
-            except ConnectionClosed:
-                pass
-            finally:
-                self._ws = None
-                self._closing = False
+        if self._ws is None:
+            return
+
+        self._closing = True
+        ws = self._ws
+
+        try:
+            finish_event = {
+                "event_id": self._generate_event_id(),
+                "type": "session.finish",
+            }
+            await self._send_json(finish_event)
+        except ASRProviderError:
+            # Connection already gone; nothing to do.
+            pass
+
+        with contextlib.suppress(TimeoutError):
+            # Wait for the server to acknowledge session completion.
+            await asyncio.wait_for(self._session_finished.wait(), timeout=_SESSION_FINISH_TIMEOUT)
+
+        with contextlib.suppress(Exception):
+            await ws.close()
+
+        self._ws = None
+        self._closing = False
+        self._session_finished.clear()
 
     async def _send_json(self, data: dict[str, Any]) -> None:
         if self._ws is None:
