@@ -107,6 +107,7 @@ class TestEvents:
                 json.dumps(
                     {
                         "type": "conversation.item.input_audio_transcription.text",
+                        "item_id": "item-hello",
                         "text": "hello",
                     }
                 ),
@@ -119,7 +120,7 @@ class TestEvents:
             events.append(evt)
 
         assert len(events) == 1
-        assert events[0] == TranscriptEvent(text="hello", is_final=False)
+        assert events[0] == TranscriptEvent(text="hello", is_final=False, segment_id="item-hello")
 
     @pytest.mark.asyncio
     async def test_yields_partial_event_with_stash(self, provider: QwenRealtimeASRProvider) -> None:
@@ -128,6 +129,7 @@ class TestEvents:
                 json.dumps(
                     {
                         "type": "conversation.item.input_audio_transcription.text",
+                        "item_id": "item-draft",
                         "text": "",
                         "stash": "draft",
                     }
@@ -135,6 +137,7 @@ class TestEvents:
                 json.dumps(
                     {
                         "type": "conversation.item.input_audio_transcription.text",
+                        "item_id": "item-hello-world",
                         "text": "hello",
                         "stash": " world",
                     }
@@ -148,8 +151,10 @@ class TestEvents:
             events.append(evt)
 
         assert len(events) == 2
-        assert events[0] == TranscriptEvent(text="draft", is_final=False)
-        assert events[1] == TranscriptEvent(text="hello world", is_final=False)
+        assert events[0] == TranscriptEvent(text="draft", is_final=False, segment_id="item-draft")
+        assert events[1] == TranscriptEvent(
+            text="hello world", is_final=False, segment_id="item-hello-world"
+        )
 
     @pytest.mark.asyncio
     async def test_yields_final_event(self, provider: QwenRealtimeASRProvider) -> None:
@@ -158,6 +163,7 @@ class TestEvents:
                 json.dumps(
                     {
                         "type": "conversation.item.input_audio_transcription.completed",
+                        "item_id": "item-world",
                         "transcript": "world",
                     }
                 ),
@@ -170,7 +176,7 @@ class TestEvents:
             events.append(evt)
 
         assert len(events) == 1
-        assert events[0] == TranscriptEvent(text="world", is_final=True)
+        assert events[0] == TranscriptEvent(text="world", is_final=True, segment_id="item-world")
 
     @pytest.mark.asyncio
     async def test_ignores_unknown_event_types(self, provider: QwenRealtimeASRProvider) -> None:
@@ -206,7 +212,19 @@ class TestEvents:
 
     @pytest.mark.asyncio
     async def test_raises_on_server_error(self, provider: QwenRealtimeASRProvider) -> None:
-        mock_ws = _MockWebSocket([json.dumps({"type": "error", "message": "rate limit exceeded"})])
+        mock_ws = _MockWebSocket(
+            [
+                json.dumps(
+                    {
+                        "type": "error",
+                        "error": {
+                            "code": "rate_limit_exceeded",
+                            "message": "rate limit exceeded",
+                        },
+                    }
+                )
+            ]
+        )
         provider._ws = mock_ws
 
         with pytest.raises(ASRProviderError, match="rate limit exceeded"):
@@ -220,7 +238,11 @@ class TestEvents:
                 json.dumps(
                     {
                         "type": "conversation.item.input_audio_transcription.failed",
-                        "message": "audio too noisy",
+                        "item_id": "item-noisy",
+                        "error": {
+                            "code": "invalid_audio",
+                            "message": "audio too noisy",
+                        },
                     }
                 ),
             ]

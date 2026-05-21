@@ -58,6 +58,29 @@ class QwenRealtimeASRProvider(RealtimeASRProvider):
     def _generate_event_id() -> str:
         return "event_" + uuid.uuid4().hex
 
+    @staticmethod
+    def _segment_id(data: dict[str, Any]) -> str | None:
+        item_id = data.get("item_id")
+        if isinstance(item_id, str) and item_id:
+            return item_id
+        return None
+
+    @staticmethod
+    def _error_message(data: dict[str, Any], default: str) -> str:
+        error = data.get("error")
+        if isinstance(error, dict):
+            message = error.get("message")
+            if isinstance(message, str) and message:
+                return message
+            code = error.get("code")
+            if isinstance(code, str) and code:
+                return code
+
+        message = data.get("message")
+        if isinstance(message, str) and message:
+            return message
+        return default
+
     async def start(self) -> None:
         """Establish the WebSocket session and send initial configuration."""
         url = f"{_DASHSCOPE_WS_URL}?model={self._model}"
@@ -130,19 +153,27 @@ class QwenRealtimeASRProvider(RealtimeASRProvider):
                     stash = data.get("stash", "")
                     combined = text + stash
                     if combined:
-                        yield TranscriptEvent(text=combined, is_final=False)
+                        yield TranscriptEvent(
+                            text=combined,
+                            is_final=False,
+                            segment_id=self._segment_id(data),
+                        )
 
                 elif event_type == "conversation.item.input_audio_transcription.completed":
                     text = data.get("transcript", "")
                     if text:
-                        yield TranscriptEvent(text=text, is_final=True)
+                        yield TranscriptEvent(
+                            text=text,
+                            is_final=True,
+                            segment_id=self._segment_id(data),
+                        )
 
                 elif event_type == "error":
-                    msg = data.get("message", "Unknown ASR server error")
+                    msg = self._error_message(data, "Unknown ASR server error")
                     raise ASRProviderError(f"ASR server error: {msg}")
 
                 elif event_type == "conversation.item.input_audio_transcription.failed":
-                    msg = data.get("message", "Transcription failed")
+                    msg = self._error_message(data, "Transcription failed")
                     raise ASRProviderError(f"ASR transcription failed: {msg}")
 
                 elif event_type == "session.finished":
