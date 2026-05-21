@@ -195,6 +195,43 @@ class TestEvents:
         assert events[0].text == "only"
 
     @pytest.mark.asyncio
+    async def test_sets_session_finished(self, provider: QwenRealtimeASRProvider) -> None:
+        mock_ws = _MockWebSocket([json.dumps({"type": "session.finished"})])
+        provider._ws = mock_ws
+
+        async for _ in provider.events():
+            pass
+
+        assert provider._session_finished.is_set()
+
+    @pytest.mark.asyncio
+    async def test_raises_on_server_error(self, provider: QwenRealtimeASRProvider) -> None:
+        mock_ws = _MockWebSocket([json.dumps({"type": "error", "message": "rate limit exceeded"})])
+        provider._ws = mock_ws
+
+        with pytest.raises(ASRProviderError, match="rate limit exceeded"):
+            async for _ in provider.events():
+                pass
+
+    @pytest.mark.asyncio
+    async def test_raises_on_transcription_failed(self, provider: QwenRealtimeASRProvider) -> None:
+        mock_ws = _MockWebSocket(
+            [
+                json.dumps(
+                    {
+                        "type": "conversation.item.input_audio_transcription.failed",
+                        "message": "audio too noisy",
+                    }
+                ),
+            ]
+        )
+        provider._ws = mock_ws
+
+        with pytest.raises(ASRProviderError, match="audio too noisy"):
+            async for _ in provider.events():
+                pass
+
+    @pytest.mark.asyncio
     async def test_raises_when_not_connected(self, provider: QwenRealtimeASRProvider) -> None:
         with pytest.raises(ASRProviderError):
             async for _ in provider.events():
@@ -204,6 +241,9 @@ class TestEvents:
 class TestStop:
     @pytest.mark.asyncio
     async def test_sends_finish_and_closes(self, provider: QwenRealtimeASRProvider) -> None:
+        # In real usage events() runs concurrently and sets _session_finished
+        # when it sees the server's session.finished message.  Here we simulate
+        # that the event has already been set so stop() doesn't wait.
         mock_ws = _MockWebSocket()
         provider._ws = mock_ws
         provider._session_finished.set()
@@ -213,6 +253,18 @@ class TestStop:
         call_args = mock_ws.send.call_args[0][0]
         data = json.loads(call_args)
         assert data["type"] == "session.finish"
+        mock_ws.close.assert_awaited_once()
+        assert provider._ws is None
+
+    @pytest.mark.asyncio
+    async def test_times_out_when_session_finished_never_arrives(
+        self, provider: QwenRealtimeASRProvider
+    ) -> None:
+        mock_ws = _MockWebSocket()
+        provider._ws = mock_ws
+
+        await provider.stop()
+
         mock_ws.close.assert_awaited_once()
         assert provider._ws is None
 

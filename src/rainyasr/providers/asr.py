@@ -23,7 +23,7 @@ _DASHSCOPE_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
 
 # Maximum time to wait for the server to send session.finished after we
 # emit session.finish.
-_SESSION_FINISH_TIMEOUT = 5.0  # seconds
+_SESSION_FINISH_TIMEOUT = 2.0  # seconds
 
 
 class QwenRealtimeASRProvider(RealtimeASRProvider):
@@ -137,6 +137,14 @@ class QwenRealtimeASRProvider(RealtimeASRProvider):
                     if text:
                         yield TranscriptEvent(text=text, is_final=True)
 
+                elif event_type == "error":
+                    msg = data.get("message", "Unknown ASR server error")
+                    raise ASRProviderError(f"ASR server error: {msg}")
+
+                elif event_type == "conversation.item.input_audio_transcription.failed":
+                    msg = data.get("message", "Transcription failed")
+                    raise ASRProviderError(f"ASR transcription failed: {msg}")
+
                 elif event_type == "session.finished":
                     self._session_finished.set()
 
@@ -146,33 +154,41 @@ class QwenRealtimeASRProvider(RealtimeASRProvider):
                 raise ASRProviderError(msg) from exc
 
     async def stop(self) -> None:
-        """Signal end-of-stream and close the connection gracefully."""
+        """Signal end-of-stream and close the connection gracefully.
+
+        This method should be called while :meth:`events` is still running in
+        the background so that the ``session.finished`` acknowledgement can be
+        consumed.  If ``events()`` is not running the call will time out after
+        :data:`_SESSION_FINISH_TIMEOUT` seconds and force-close the socket.
+        """
         if self._ws is None:
             return
 
-        self._closing = True
         ws = self._ws
+        self._closing = True
 
         try:
-            finish_event = {
-                "event_id": self._generate_event_id(),
-                "type": "session.finish",
-            }
-            await self._send_json(finish_event)
-        except ASRProviderError:
-            # Connection already gone; nothing to do.
-            pass
+            try:
+                finish_event = {
+                    "event_id": self._generate_event_id(),
+                    "type": "session.finish",
+                }
+                await self._send_json(finish_event)
+            except ASRProviderError:
+                # Connection already gone; nothing to do.
+                pass
 
-        with contextlib.suppress(TimeoutError):
-            # Wait for the server to acknowledge session completion.
-            await asyncio.wait_for(self._session_finished.wait(), timeout=_SESSION_FINISH_TIMEOUT)
-
-        with contextlib.suppress(Exception):
-            await ws.close()
-
-        self._ws = None
-        self._closing = False
-        self._session_finished.clear()
+            with contextlib.suppress(TimeoutError):
+                # Wait for the server to acknowledge session completion.
+                await asyncio.wait_for(
+                    self._session_finished.wait(), timeout=_SESSION_FINISH_TIMEOUT
+                )
+        finally:
+            with contextlib.suppress(Exception):
+                await ws.close()
+            self._ws = None
+            self._closing = False
+            self._session_finished.clear()
 
     async def _send_json(self, data: dict[str, Any]) -> None:
         if self._ws is None:
