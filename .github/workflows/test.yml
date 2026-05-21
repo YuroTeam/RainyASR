@@ -26,7 +26,12 @@ jobs:
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y portaudio19-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 \
+            libgl1 \
+            portaudio19-dev
 
       - name: Install dependencies
         run: uv sync --group dev
@@ -37,5 +42,12 @@ jobs:
       - name: Run ruff format check
         run: uv run ruff format --check src/ tests/
 
+      - name: Run pytest (Linux)
+        if: runner.os == 'Linux'
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run pytest tests/ -v
+
       - name: Run pytest
+        if: runner.os != 'Linux'
         run: uv run pytest tests/ -v
