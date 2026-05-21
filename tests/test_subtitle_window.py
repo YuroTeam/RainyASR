@@ -133,9 +133,32 @@ class TestSubtitleWindow:
         window.show()
         window._set_controls_visible(True)
 
-        with qtbot.waitSignal(window.close_requested, timeout=1000):
-            qtbot.mouseClick(window._close_button, Qt.MouseButton.LeftButton)
+        close_requested = []
+        closed = []
+        window.close_requested.connect(lambda: close_requested.append(True))
+        window.closed.connect(lambda: closed.append(True))
 
+        qtbot.mouseClick(window._close_button, Qt.MouseButton.LeftButton)
+
+        assert close_requested == [True]
+        assert closed == [True]
+        assert not window.isVisible()
+
+    def test_programmatic_close_emits_closed_without_close_requested(
+        self, window: SubtitleWindow
+    ) -> None:
+        window.update_subtitle("Hello", "你好")
+        window.show()
+
+        close_requested = []
+        closed = []
+        window.close_requested.connect(lambda: close_requested.append(True))
+        window.closed.connect(lambda: closed.append(True))
+
+        window.close()
+
+        assert close_requested == []
+        assert closed == [True]
         assert not window.isVisible()
 
     def test_size_constraints(self, window: SubtitleWindow) -> None:

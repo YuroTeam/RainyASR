@@ -3,12 +3,26 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Sequence
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from rainyasr.config import SubtitleConfig
 from rainyasr.gui.subtitle_window import SubtitleWindow, configure_macos_overlay_app
+
+
+def quit_after_all_windows_close(app: QApplication, windows: Sequence[SubtitleWindow]) -> None:
+    """Quit the demo only after every subtitle window has been closed."""
+    open_windows = set(windows)
+
+    def mark_closed(window: SubtitleWindow) -> None:
+        open_windows.discard(window)
+        if not open_windows:
+            app.quit()
+
+    for window in windows:
+        window.closed.connect(lambda window=window: mark_closed(window))
 
 
 def main() -> None:
@@ -56,8 +70,7 @@ def main() -> None:
     window3.move(window.x(), window.y() + window.height() + 40)
     window3.show()
 
-    for demo_window in (window, window2, window3):
-        demo_window.close_requested.connect(app.quit)
+    quit_after_all_windows_close(app, (window, window2, window3))
 
     # Simulate partial -> final transition on window1
     def simulate_partial():
@@ -77,7 +90,7 @@ def main() -> None:
     QTimer.singleShot(3000, simulate_partial)
     QTimer.singleShot(6000, simulate_final)
 
-    print("SubtitleWindow demo running. Close any window to exit.")
+    print("SubtitleWindow demo running. Close all windows to exit.")
     print("Features to check:")
     print("  - Window stays on top of other apps")
     print("  - Drag window by clicking and dragging")

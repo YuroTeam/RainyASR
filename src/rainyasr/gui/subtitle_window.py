@@ -12,7 +12,7 @@ import sys
 from typing import override
 
 from PySide6.QtCore import QEvent, QPoint, Qt, Signal
-from PySide6.QtGui import QColor, QEnterEvent, QFont, QMouseEvent, QResizeEvent
+from PySide6.QtGui import QCloseEvent, QColor, QEnterEvent, QFont, QMouseEvent, QResizeEvent
 from PySide6.QtWidgets import QGraphicsDropShadowEffect, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from rainyasr.config import SubtitleConfig
@@ -48,6 +48,7 @@ class SubtitleWindow(QWidget):
     """
 
     close_requested = Signal()
+    closed = Signal()
 
     def __init__(self, config: SubtitleConfig | None = None) -> None:
         super().__init__()
@@ -294,6 +295,12 @@ class SubtitleWindow(QWidget):
         self.close()
 
     # -- Drag to move ------------------------------------------------------
+
+    @override
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self._set_controls_visible(False)
+        self.closed.emit()
+        super().closeEvent(event)
 
     @override
     def resizeEvent(self, event: QResizeEvent) -> None:
