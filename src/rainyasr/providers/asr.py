@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import uuid
@@ -18,6 +19,9 @@ from rainyasr.providers.base import (
 )
 
 _DASHSCOPE_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
+
+# Grace period after session.finish to let the server send final transcripts.
+_FINISH_GRACE_PERIOD = 1.0  # seconds
 
 
 class QwenRealtimeASRProvider(RealtimeASRProvider):
@@ -45,6 +49,7 @@ class QwenRealtimeASRProvider(RealtimeASRProvider):
         self._sample_rate = sample_rate
         self._language = language
         self._ws: websockets.WebSocketClientProtocol | None = None
+        self._closing = False
 
     @staticmethod
     def _generate_event_id() -> str:
@@ -127,26 +132,36 @@ class QwenRealtimeASRProvider(RealtimeASRProvider):
                         yield TranscriptEvent(text=text, is_final=True)
 
         except ConnectionClosed as exc:
-            msg = f"ASR WebSocket closed: {exc}"
-            raise ASRProviderError(msg) from exc
+            if not self._closing:
+                msg = f"ASR WebSocket closed unexpectedly: {exc}"
+                raise ASRProviderError(msg) from exc
 
     async def stop(self) -> None:
-        """Signal end-of-stream and close the connection."""
+        """Signal end-of-stream and close the connection gracefully."""
         if self._ws is not None:
+            self._closing = True
             try:
                 finish_event = {
                     "event_id": self._generate_event_id(),
                     "type": "session.finish",
                 }
                 await self._send_json(finish_event)
+                # Allow the server time to emit final transcripts before we
+                # tear down the socket.
+                await asyncio.sleep(_FINISH_GRACE_PERIOD)
                 await self._ws.close()
             except ConnectionClosed:
                 pass
             finally:
                 self._ws = None
+                self._closing = False
 
     async def _send_json(self, data: dict[str, Any]) -> None:
         if self._ws is None:
             msg = "WebSocket not connected"
             raise ASRProviderError(msg)
-        await self._ws.send(json.dumps(data))
+        try:
+            await self._ws.send(json.dumps(data))
+        except ConnectionClosed as exc:
+            msg = f"ASR WebSocket closed during send: {exc}"
+            raise ASRProviderError(msg) from exc

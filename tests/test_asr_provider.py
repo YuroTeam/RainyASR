@@ -177,7 +177,8 @@ class TestStop:
         mock_ws = _MockWebSocket()
         provider._ws = mock_ws
 
-        await provider.stop()
+        with patch("rainyasr.providers.asr.asyncio.sleep", AsyncMock()):
+            await provider.stop()
 
         call_args = mock_ws.send.call_args[0][0]
         data = json.loads(call_args)

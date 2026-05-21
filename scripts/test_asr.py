@@ -20,10 +20,18 @@ CHUNK_BYTES = int(SAMPLE_RATE * CHUNK_DURATION * 2)  # 16-bit mono
 TOTAL_DURATION = 5.0
 
 
-def generate_test_tone(duration: float, freq: float = 440.0) -> bytes:
-    """Generate a PCM16 sine wave for testing."""
+def generate_test_tone(duration: float, freq: float = 200.0) -> bytes:
+    """Generate a PCM16 test tone with harmonic structure for testing."""
     t = np.linspace(0, duration, int(SAMPLE_RATE * duration), endpoint=False)
-    wave = 0.3 * np.sin(2 * np.pi * freq * t)
+    # Harmonic-rich signal (vowel-like) with light FM
+    wave = 0.3 * (
+        np.sin(2 * np.pi * freq * t)
+        + 0.5 * np.sin(2 * np.pi * freq * 2 * t)
+        + 0.25 * np.sin(2 * np.pi * freq * 3 * t)
+        + 0.125 * np.sin(2 * np.pi * freq * 4 * t)
+    )
+    fm = 1 + 0.05 * np.sin(2 * np.pi * 5 * t)
+    wave = wave * fm
     return float32_to_pcm16(wave.astype(np.float32))
 
 
@@ -46,20 +54,16 @@ async def main() -> None:
         for chunk in chunks:
             await provider.send_audio(chunk)
             await asyncio.sleep(CHUNK_DURATION)
+        print("\nAudio sent, requesting stop...")
+        await provider.stop()
 
     async def receiver() -> None:
         async for event in provider.events():
             tag = "[FINAL]" if event.is_final else "[PARTIAL]"
             print(f"  {tag} {event.text}")
 
-    try:
-        await asyncio.gather(sender(), receiver())
-    except asyncio.CancelledError:
-        pass
-    finally:
-        print("\nStopping...")
-        await provider.stop()
-        print("Done.")
+    await asyncio.gather(sender(), receiver())
+    print("Done.")
 
 
 if __name__ == "__main__":
