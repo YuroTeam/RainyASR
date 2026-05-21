@@ -21,6 +21,7 @@ dependencies = [
     "soundcard>=0.4.6",
     "openai>=2.37.0",
     "dashscope>=1.25.18",
+    "websockets>=14.0",
 ]
 
 [project.scripts]
