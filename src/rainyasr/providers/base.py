@@ -15,10 +15,14 @@ class TranscriptEvent:
         text: The recognized text.
         is_final: ``True`` if this is a final (committed) transcript.
             ``False`` for partial (interim) results that may change.
+        segment_id: Optional backend segment identifier. Providers should set
+            this when available so workers can replace partial text and dedupe
+            final transcripts without relying only on string comparison.
     """
 
     text: str
     is_final: bool
+    segment_id: str | None = None
 
 
 class ProviderError(Exception):
@@ -62,11 +66,14 @@ class RealtimeASRProvider(ABC):
         """
 
     @abstractmethod
-    async def events(self) -> AsyncIterator[TranscriptEvent]:
-        """Yield transcript events as they arrive from the ASR backend.
+    def events(self) -> AsyncIterator[TranscriptEvent]:
+        """Return an async iterator of transcript events.
 
         Yields:
             TranscriptEvent with partial or final text.
+
+        Raises:
+            ASRProviderError: if the stream fails while consuming events.
         """
 
     @abstractmethod
