@@ -74,6 +74,20 @@ uv run ruff check --fix src/
 uv run ruff format src/
 ```
 
+### 运行测试
+
+```bash
+# 运行所有测试
+uv run pytest
+
+# 运行特定模块测试
+uv run pytest tests/test_subtitle_window.py -v
+uv run pytest tests/test_translate_provider.py -v
+
+# 带覆盖率报告
+uv run pytest --cov=src/rainyasr --cov-report=term-missing
+```
+
 ### 手动运行 pre-commit（可选）
 
 ```bash
@@ -128,6 +142,30 @@ uv run python src/rainyasr/main.py
 ├── uv.lock               # 依赖锁定文件
 └── README.md
 ```
+
+## 手动验证脚本
+
+项目提供了一系列手动验证脚本，用于独立测试各模块：
+
+| 脚本 | 功能 | 运行方式 |
+|---|---|---|
+| `scripts/test_capture.py` | 音频设备检测 + 10 秒录音测试 | `uv run python scripts/test_capture.py` |
+| `scripts/test_asr.py` | 发送测试音频到 DashScope 实时 ASR | `DASHSCOPE_API_KEY=xxx uv run python scripts/test_asr.py` |
+| `scripts/test_translate.py` | 翻译 Provider 交互测试 | `uv run python scripts/test_translate.py` |
+| `scripts/demo_subtitle.py` | 悬浮字幕窗口视觉预览 | `uv run python scripts/demo_subtitle.py` |
+
+### 字幕窗口视觉验证
+
+```bash
+uv run python scripts/demo_subtitle.py
+```
+
+启动后会弹出 3 个悬浮字幕窗口，可验证：
+- 窗口始终置顶（切换到其他应用仍可见）
+- 鼠标拖拽移动窗口位置
+- 双语 / 单语模式切换
+- 状态指示点颜色变化（partial 黄色 → final 绿色）
+- 不同字体大小和配色效果
 
 ## 平台注意事项
 
