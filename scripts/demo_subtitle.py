@@ -56,6 +56,9 @@ def main() -> None:
     window3.move(window.x(), window.y() + window.height() + 40)
     window3.show()
 
+    for demo_window in (window, window2, window3):
+        demo_window.close_requested.connect(app.quit)
+
     # Simulate partial -> final transition on window1
     def simulate_partial():
         window.update_subtitle(
@@ -78,7 +81,7 @@ def main() -> None:
     print("Features to check:")
     print("  - Window stays on top of other apps")
     print("  - Drag window by clicking and dragging")
-    print("  - Window 1: status dot changes yellow (partial) -> green (final)")
+    print("  - Hover over any window to reveal the close button")
     print("  - Window 2: monolingual mode, only translation shown")
     print("  - Window 3: larger font, amber text")
 

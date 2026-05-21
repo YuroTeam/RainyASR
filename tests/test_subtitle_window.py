@@ -58,28 +58,85 @@ class TestSubtitleWindow:
         assert window._original_label.font().pointSize() == 36
         assert window._translated_label.font().pointSize() == 36
 
+    def test_apply_config_adjusts_window_size(self, window: SubtitleWindow) -> None:
+        window.update_subtitle("Hello world", "你好世界")
+        before = window.size()
+
+        window.apply_config(SubtitleConfig(font_size=72))
+
+        assert window.size().height() > before.height()
+
     def test_empty_text_hides_labels(self, window: SubtitleWindow) -> None:
         window.update_subtitle("", "")
 
         assert window._original_label.isHidden()
         assert window._translated_label.isHidden()
 
-    def test_partial_status_dot_yellow(self, window: SubtitleWindow) -> None:
-        window.update_subtitle("Hello", "你好", is_partial=True)
+    def test_empty_text_hides_visible_window(self, window: SubtitleWindow) -> None:
+        window.update_subtitle("Hello", "你好")
+        window.show()
+        window._set_controls_visible(True)
 
-        assert not window._status_label.isHidden()
-        assert "FBBF24" in window._status_label.styleSheet()
-
-    def test_final_status_dot_green(self, window: SubtitleWindow) -> None:
-        window.update_subtitle("Hello", "你好", is_partial=False)
-
-        assert not window._status_label.isHidden()
-        assert "22C55E" in window._status_label.styleSheet()
-
-    def test_empty_text_hides_status_dot(self, window: SubtitleWindow) -> None:
         window.update_subtitle("", "")
 
-        assert window._status_label.isHidden()
+        assert not window.isVisible()
+        assert window._close_button.isHidden()
+
+    def test_text_restores_window_hidden_by_empty_text(self, window: SubtitleWindow) -> None:
+        window.update_subtitle("Hello", "你好")
+        window.show()
+        window.update_subtitle("", "")
+
+        window.update_subtitle("Hello again", "再次你好")
+
+        assert window.isVisible()
+
+    def test_update_subtitle_does_not_show_never_shown_window(self, window: SubtitleWindow) -> None:
+        window.update_subtitle("Hello", "你好")
+
+        assert not window.isVisible()
+
+    def test_close_button_starts_hidden(self, window: SubtitleWindow) -> None:
+        window.update_subtitle("Hello", "你好")
+
+        assert window._close_button.isHidden()
+
+    def test_close_button_shows_only_when_controls_visible(self, window: SubtitleWindow) -> None:
+        window.update_subtitle("Hello", "你好")
+
+        window._set_controls_visible(True)
+
+        assert not window._close_button.isHidden()
+
+    def test_close_button_remains_hidden_when_monolingual_mode_has_no_visible_text(
+        self, window: SubtitleWindow
+    ) -> None:
+        window.apply_config(SubtitleConfig(bilingual_mode=False))
+
+        window.update_subtitle("partial source only", "", is_partial=True)
+        window._set_controls_visible(True)
+
+        assert window._original_label.isHidden()
+        assert window._translated_label.isHidden()
+        assert window._close_button.isHidden()
+
+    def test_close_button_is_positioned_top_right(self, window: SubtitleWindow) -> None:
+        window.update_subtitle("Hello", "你好", is_partial=True)
+
+        assert window._close_button.x() == window.width() - window._close_button.width() - 8
+        assert window._close_button.y() == 8
+
+    def test_close_button_click_closes_window_and_emits_signal(
+        self, qtbot, window: SubtitleWindow
+    ) -> None:
+        window.update_subtitle("Hello", "你好")
+        window.show()
+        window._set_controls_visible(True)
+
+        with qtbot.waitSignal(window.close_requested, timeout=1000):
+            qtbot.mouseClick(window._close_button, Qt.MouseButton.LeftButton)
+
+        assert not window.isVisible()
 
     def test_size_constraints(self, window: SubtitleWindow) -> None:
         assert window.minimumWidth() == 200
