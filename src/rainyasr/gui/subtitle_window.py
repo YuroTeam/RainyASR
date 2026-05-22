@@ -129,6 +129,11 @@ class SubtitleWindow(QWidget):
         self._translated_label.setWordWrap(True)
         layout.addWidget(self._translated_label)
 
+        self._original_shadow = QGraphicsDropShadowEffect(self._original_label)
+        self._translated_shadow = QGraphicsDropShadowEffect(self._translated_label)
+        self._original_label.setGraphicsEffect(self._original_shadow)
+        self._translated_label.setGraphicsEffect(self._translated_shadow)
+
         self._update_label_visibility()
 
     def _setup_close_button(self) -> None:
@@ -152,7 +157,9 @@ class SubtitleWindow(QWidget):
 
         # Font
         font = QFont()
-        font.setFamily(cfg.font_family.split(",")[0].strip())
+        font_families = [family.strip() for family in cfg.font_family.split(",") if family.strip()]
+        if font_families:
+            font.setFamilies(font_families)
         font.setPointSize(cfg.font_size)
         font.setBold(True)
 
@@ -200,17 +207,10 @@ class SubtitleWindow(QWidget):
         self.setStyleSheet(style)
 
         # Text shadow effect for readability on any video/game background
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(8)
-        shadow.setColor(QColor(0, 0, 0, 180))
-        shadow.setOffset(1, 1)
-        self._original_label.setGraphicsEffect(shadow)
-
-        shadow2 = QGraphicsDropShadowEffect(self)
-        shadow2.setBlurRadius(8)
-        shadow2.setColor(QColor(0, 0, 0, 180))
-        shadow2.setOffset(1, 1)
-        self._translated_label.setGraphicsEffect(shadow2)
+        for shadow in (self._original_shadow, self._translated_shadow):
+            shadow.setBlurRadius(8)
+            shadow.setColor(QColor(0, 0, 0, 180))
+            shadow.setOffset(1, 1)
 
     # -- Public API --------------------------------------------------------
 

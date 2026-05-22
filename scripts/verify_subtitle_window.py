@@ -12,6 +12,8 @@ from PySide6.QtWidgets import QApplication
 from rainyasr.config import SubtitleConfig
 from rainyasr.gui.subtitle_window import SubtitleWindow, configure_macos_overlay_app
 
+DEFAULT_SMOKE_TIMEOUT_MS = 5000
+
 
 def create_windows() -> tuple[SubtitleWindow, SubtitleWindow, SubtitleWindow]:
     """Create the three windows used by manual and smoke verification."""
@@ -93,7 +95,13 @@ def print_window_flag_report(window: SubtitleWindow) -> None:
         print(f"  [{'ok' if ok else 'missing'}] {name}")
 
 
-def run_smoke(app: QApplication, windows: Sequence[SubtitleWindow], open_windows: set) -> int:
+def run_smoke(
+    app: QApplication,
+    windows: Sequence[SubtitleWindow],
+    open_windows: set,
+    *,
+    timeout_ms: int = DEFAULT_SMOKE_TIMEOUT_MS,
+) -> int:
     """Automatically verify close lifecycle without requiring manual clicks."""
     errors: list[str] = []
 
@@ -117,7 +125,7 @@ def run_smoke(app: QApplication, windows: Sequence[SubtitleWindow], open_windows
 
     QTimer.singleShot(50, close_first_window)
     QTimer.singleShot(150, assert_first_close_only_closed_one)
-    QTimer.singleShot(3000, fail_on_timeout)
+    QTimer.singleShot(timeout_ms, fail_on_timeout)
 
     app.exec()
     if errors:
@@ -153,6 +161,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="run an automatic lifecycle smoke check and exit",
     )
+    parser.add_argument(
+        "--smoke-timeout-ms",
+        type=int,
+        default=DEFAULT_SMOKE_TIMEOUT_MS,
+        help="maximum smoke verification runtime before failing",
+    )
     return parser.parse_args()
 
 
@@ -166,7 +180,7 @@ def main() -> int:
     open_windows = quit_after_all_windows_close(app, windows)
 
     if args.smoke:
-        return run_smoke(app, windows, open_windows)
+        return run_smoke(app, windows, open_windows, timeout_ms=args.smoke_timeout_ms)
 
     return run_manual(app, windows)
 

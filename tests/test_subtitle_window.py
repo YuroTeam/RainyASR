@@ -58,6 +58,24 @@ class TestSubtitleWindow:
         assert window._original_label.font().pointSize() == 36
         assert window._translated_label.font().pointSize() == 36
 
+    def test_apply_config_uses_font_fallbacks(self, window: SubtitleWindow) -> None:
+        config = SubtitleConfig(font_family="Inter, Arial, sans-serif")
+        window.apply_config(config)
+
+        assert window._original_label.font().families() == ["Inter", "Arial", "sans-serif"]
+        assert window._translated_label.font().families() == ["Inter", "Arial", "sans-serif"]
+
+    def test_apply_config_reuses_shadow_effects(self, window: SubtitleWindow) -> None:
+        original_shadow = window._original_shadow
+        translated_shadow = window._translated_shadow
+
+        window.apply_config(SubtitleConfig(font_size=36))
+
+        assert window._original_shadow is original_shadow
+        assert window._translated_shadow is translated_shadow
+        assert window._original_label.graphicsEffect() is original_shadow
+        assert window._translated_label.graphicsEffect() is translated_shadow
+
     def test_apply_config_adjusts_window_size(self, window: SubtitleWindow) -> None:
         window.update_subtitle("Hello world", "你好世界")
         before = window.size()
@@ -189,12 +207,12 @@ class TestSubtitleWindow:
     def test_macos_overlay_app_uses_accessory_activation_policy(self) -> None:
         import AppKit
 
-        original_policy = AppKit.NSApplication.sharedApplication().activationPolicy()
+        app = AppKit.NSApplication.sharedApplication()
+        original_policy = app.activationPolicy()
 
-        configure_macos_overlay_app()
+        try:
+            configure_macos_overlay_app()
 
-        assert (
-            AppKit.NSApplication.sharedApplication().activationPolicy()
-            == AppKit.NSApplicationActivationPolicyAccessory
-        )
-        AppKit.NSApplication.sharedApplication().setActivationPolicy_(original_policy)
+            assert app.activationPolicy() == AppKit.NSApplicationActivationPolicyAccessory
+        finally:
+            app.setActivationPolicy_(original_policy)
