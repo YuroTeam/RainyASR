@@ -2,7 +2,7 @@
 
 Examples:
     uv run python scripts/test_worker.py --fake
-    DASHSCOPE_API_KEY=... DEEPSEEK_API_KEY=... uv run python scripts/test_worker.py --real
+    DASHSCOPE_API_KEY=... uv run python scripts/test_worker.py --real
     uv run python scripts/test_worker.py --real --silence-rms-threshold 0.003
 """
 
@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QApplication
 
 from rainyasr.config import AppConfig, EnvConfig
 from rainyasr.gui.subtitle_window import SubtitleWindow, configure_macos_overlay_app
-from rainyasr.providers import DeepSeekTranslationProvider, QwenRealtimeASRProvider
+from rainyasr.providers import OpenAICompatibleTranslationProvider, QwenRealtimeASRProvider
 from rainyasr.providers.base import RealtimeASRProvider, TranscriptEvent, TranslationProvider
 from rainyasr.worker import SubtitleWorker
 
@@ -112,15 +112,29 @@ async def run_fake(app: QApplication) -> None:
 
 async def run_real(args: argparse.Namespace) -> None:
     dashscope_key = EnvConfig.dashscope_api_key()
-    deepseek_key = EnvConfig.deepseek_api_key()
     if not dashscope_key:
         print("[ERROR] DASHSCOPE_API_KEY is not set.", file=sys.stderr)
         raise SystemExit(1)
-    if not deepseek_key:
-        print("[ERROR] DEEPSEEK_API_KEY is not set.", file=sys.stderr)
-        raise SystemExit(1)
 
     config = AppConfig.load()
+    translation_model = EnvConfig.translate_model()
+    translation_key = EnvConfig.translate_api_key()
+    if not translation_key and OpenAICompatibleTranslationProvider.is_qwen_model(translation_model):
+        translation_key = dashscope_key
+    if not translation_key:
+        translation_key = EnvConfig.deepseek_api_key()
+    if not translation_key:
+        print("[ERROR] translation API key is not set.", file=sys.stderr)
+        raise SystemExit(1)
+
+    translation_base_url = EnvConfig.translate_base_url()
+    if not translation_base_url and OpenAICompatibleTranslationProvider.is_qwen_model(
+        translation_model
+    ):
+        translation_base_url = EnvConfig.dashscope_compatible_base_url()
+    if not translation_base_url:
+        translation_base_url = EnvConfig.deepseek_base_url()
+
     window = SubtitleWindow(config.subtitle)
     asr = QwenRealtimeASRProvider(
         api_key=dashscope_key,
@@ -128,10 +142,10 @@ async def run_real(args: argparse.Namespace) -> None:
         sample_rate=config.audio.sample_rate,
         language=config.asr.asr_language,
     )
-    translator = DeepSeekTranslationProvider(
-        api_key=deepseek_key,
-        base_url=EnvConfig.deepseek_base_url(),
-        model=EnvConfig.translate_model(),
+    translator = OpenAICompatibleTranslationProvider(
+        api_key=translation_key,
+        base_url=translation_base_url,
+        model=translation_model,
     )
     worker = SubtitleWorker(
         asr_provider=asr,

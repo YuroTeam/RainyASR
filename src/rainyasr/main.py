@@ -25,7 +25,7 @@ from rainyasr.audio.capture import AudioDeviceDetector, AudioDeviceInfo, NoLoopb
 from rainyasr.config import AppConfig, EnvConfig
 from rainyasr.gui.settings_dialog import ApiKeyValues, SettingsDialog
 from rainyasr.hotkey import GlobalHotkeyManager, HotkeyPermissionError, HotkeyRegistrationError
-from rainyasr.providers import DeepSeekTranslationProvider, QwenRealtimeASRProvider
+from rainyasr.providers import OpenAICompatibleTranslationProvider, QwenRealtimeASRProvider
 from rainyasr.worker import SubtitleWorker
 
 ProviderFactory = Callable[..., object]
@@ -68,7 +68,7 @@ class RainyASRController(QObject):
         deepseek_api_key: str | None = None,
         audio_device_detector: AudioDeviceDetector | None = None,
         asr_provider_factory: ProviderFactory = QwenRealtimeASRProvider,
-        translation_provider_factory: ProviderFactory = DeepSeekTranslationProvider,
+        translation_provider_factory: ProviderFactory = OpenAICompatibleTranslationProvider,
         worker_factory: WorkerFactory = SubtitleWorker,
         hotkey_manager_factory: HotkeyManagerFactory = GlobalHotkeyManager,
         settings_dialog_factory: SettingsDialogFactory = SettingsDialog,
@@ -108,6 +108,7 @@ class RainyASRController(QObject):
 
         self._app.qapplication.setQuitOnLastWindowClosed(False)
         self._app.window.closed.connect(self.request_quit)
+        self._app.window.settings_requested.connect(self.open_settings)
 
     @property
     def worker(self) -> SubtitleWorker | None:
@@ -265,6 +266,7 @@ class RainyASRController(QObject):
             await worker.stop()
 
     def _create_worker(self, device: AudioDeviceInfo) -> SubtitleWorker:
+        translation_model = EnvConfig.translate_model()
         asr_provider = self._asr_provider_factory(
             self._dashscope_api_key,
             model=self._config.asr.asr_model,
@@ -272,9 +274,9 @@ class RainyASRController(QObject):
             language=self._config.asr.asr_language,
         )
         translation_provider = self._translation_provider_factory(
-            self._deepseek_api_key,
-            base_url=EnvConfig.deepseek_base_url(),
-            model=EnvConfig.translate_model(),
+            self._translation_api_key(translation_model),
+            base_url=self._translation_base_url(translation_model),
+            model=translation_model,
         )
         return self._worker_factory(
             asr_provider=asr_provider,
@@ -289,7 +291,8 @@ class RainyASRController(QObject):
         )
 
     def _has_api_keys(self) -> bool:
-        return bool(self._dashscope_api_key and self._deepseek_api_key)
+        translation_model = EnvConfig.translate_model()
+        return bool(self._dashscope_api_key and self._translation_api_key(translation_model))
 
     def _prompt_for_missing_api_keys(self) -> bool:
         dialog = self._settings_dialog_factory(
@@ -315,11 +318,28 @@ class RainyASRController(QObject):
             "warning",
             "API keys required",
             (
-                "Set DASHSCOPE_API_KEY and DEEPSEEK_API_KEY in the environment or .env file, "
-                "or enter them in Settings for this run."
+                "Set DASHSCOPE_API_KEY for ASR and Qwen translation. If you use a non-Qwen "
+                "translation backend, also set TRANSLATE_API_KEY or DEEPSEEK_API_KEY."
             ),
         )
         return False
+
+    def _translation_api_key(self, model: str) -> str:
+        override = EnvConfig.translate_api_key()
+        if override:
+            return override
+        if OpenAICompatibleTranslationProvider.is_qwen_model(model):
+            return self._dashscope_api_key
+        return self._deepseek_api_key
+
+    @staticmethod
+    def _translation_base_url(model: str) -> str:
+        override = EnvConfig.translate_base_url()
+        if override:
+            return override
+        if OpenAICompatibleTranslationProvider.is_qwen_model(model):
+            return EnvConfig.dashscope_compatible_base_url()
+        return EnvConfig.deepseek_base_url()
 
     def _start_hotkey(self) -> None:
         self._stop_hotkey()

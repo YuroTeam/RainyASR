@@ -39,10 +39,12 @@ AudioStreamFactory = Callable[..., AudioStream]
 
 
 @dataclass(frozen=True)
-class _FinalTranscript:
+class _TranslationRequest:
     text: str
     segment_id: str | None
     history: tuple[str, ...]
+    source_version: int
+    is_partial: bool = False
 
 
 @dataclass(frozen=True)
@@ -74,6 +76,10 @@ class SubtitleWorker(QObject):
         channels: int = 1,
         frame_ms: int = 100,
         audio_queue_max_frames: int = 100,
+        translation_queue_max_items: int = 2,
+        translate_partials: bool = True,
+        partial_translation_interval_ms: int = 300,
+        partial_translation_min_chars: int = 3,
         audio_device_detector: AudioDeviceDetector | None = None,
         audio_stream_factory: AudioStreamFactory | None = None,
         audio_ring_buffer: AudioRingBuffer | None = None,
@@ -94,6 +100,12 @@ class SubtitleWorker(QObject):
             raise ValueError("frame_ms must be positive")
         if audio_queue_max_frames <= 0:
             raise ValueError("audio_queue_max_frames must be positive")
+        if translation_queue_max_items <= 0:
+            raise ValueError("translation_queue_max_items must be positive")
+        if partial_translation_interval_ms <= 0:
+            raise ValueError("partial_translation_interval_ms must be positive")
+        if partial_translation_min_chars < 0:
+            raise ValueError("partial_translation_min_chars must be non-negative")
         if backpressure_reconnect_threshold < 0:
             raise ValueError("backpressure_reconnect_threshold must be non-negative")
         if silence_rms_threshold < 0:
@@ -112,6 +124,9 @@ class SubtitleWorker(QObject):
         self._channels = channels
         self._frame_ms = frame_ms
         self._audio_gain = audio_gain
+        self._translate_partials = translate_partials
+        self._partial_translation_interval = partial_translation_interval_ms / 1000
+        self._partial_translation_min_chars = partial_translation_min_chars
         self._backpressure_reconnect_threshold = backpressure_reconnect_threshold
         self._enable_silence_gate = enable_silence_gate
         self._silence_rms_threshold = silence_rms_threshold
@@ -126,23 +141,29 @@ class SubtitleWorker(QObject):
         self._audio_queue: asyncio.Queue[_AudioQueueItem | None] = asyncio.Queue(
             maxsize=audio_queue_max_frames
         )
-        self._translation_queue: asyncio.Queue[_FinalTranscript | None] = asyncio.Queue()
+        self._translation_queue: asyncio.Queue[_TranslationRequest | None] = asyncio.Queue(
+            maxsize=translation_queue_max_items
+        )
         self._preroll_audio_frames: deque[bytes] = deque(maxlen=self._preroll_max_frames)
         self._audio_stream: AudioStream | None = None
 
         self._audio_sender_task: asyncio.Task[None] | None = None
         self._asr_event_task: asyncio.Task[None] | None = None
         self._translation_task: asyncio.Task[None] | None = None
+        self._partial_translation_task: asyncio.Task[None] | None = None
         self._backpressure_reconnect_task: asyncio.Task[None] | None = None
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._reconnect_event: asyncio.Event | None = None
+        self._partial_translation_event: asyncio.Event | None = None
+        self._translation_semaphore: asyncio.Semaphore | None = None
         self._asr_send_lock: asyncio.Lock | None = None
         self._stop_lock: asyncio.Lock | None = None
 
         self._running = False
         self._stopping = False
         self._dropped_audio_frames = 0
+        self._dropped_translation_items = 0
         self._consecutive_audio_drops = 0
         self._reconnecting = False
         self._asr_session_active = False
@@ -154,6 +175,10 @@ class SubtitleWorker(QObject):
         self._final_segment_ids: set[str] = set()
         self._final_texts_without_id: set[str] = set()
         self._source_history: list[str] = []
+        self._source_version = 0
+        self._latest_partial_request: _TranslationRequest | None = None
+        self._latest_partial_version = 0
+        self._last_partial_translation_text = ""
 
         if subtitle_window is not None:
             self.subtitle_changed.connect(
@@ -175,6 +200,11 @@ class SubtitleWorker(QObject):
         return self._dropped_audio_frames
 
     @property
+    def dropped_translation_items(self) -> int:
+        """Number of stale final transcripts dropped before translation."""
+        return self._dropped_translation_items
+
+    @property
     def is_asr_session_active(self) -> bool:
         """Return whether a remote ASR session is currently open."""
         return self._asr_session_active
@@ -186,10 +216,13 @@ class SubtitleWorker(QObject):
 
         self._loop = asyncio.get_running_loop()
         self._reconnect_event = asyncio.Event()
+        self._partial_translation_event = asyncio.Event()
+        self._translation_semaphore = asyncio.Semaphore(2)
         self._asr_send_lock = asyncio.Lock()
         self._stop_lock = asyncio.Lock()
         self._stopping = False
         self._dropped_audio_frames = 0
+        self._dropped_translation_items = 0
         self._consecutive_audio_drops = 0
         self._reconnecting = False
         self._asr_session_active = False
@@ -207,6 +240,9 @@ class SubtitleWorker(QObject):
             )
             self._translation_task = self._loop.create_task(
                 self._translation_loop(), name="rainyasr-translation"
+            )
+            self._partial_translation_task = self._loop.create_task(
+                self._partial_translation_loop(), name="rainyasr-partial-translation"
             )
             self._backpressure_reconnect_task = self._loop.create_task(
                 self._backpressure_reconnect_loop(),
@@ -239,6 +275,7 @@ class SubtitleWorker(QObject):
                     self._audio_sender_task,
                     self._asr_event_task,
                     self._translation_task,
+                    self._partial_translation_task,
                     self._backpressure_reconnect_task,
                 )
             )
@@ -257,13 +294,17 @@ class SubtitleWorker(QObject):
             await self._stop_asr_session()
             await self._put_queue_sentinel(self._translation_queue)
             await self._cancel_task(self._backpressure_reconnect_task)
+            await self._cancel_task(self._partial_translation_task)
             await self._cancel_task(self._translation_task)
 
             self._audio_sender_task = None
             self._asr_event_task = None
             self._translation_task = None
+            self._partial_translation_task = None
             self._backpressure_reconnect_task = None
             self._reconnect_event = None
+            self._partial_translation_event = None
+            self._translation_semaphore = None
             self._asr_send_lock = None
             self._running = False
             self._stopping = False
@@ -566,11 +607,7 @@ class SubtitleWorker(QObject):
                     history_size=len(item.history),
                 )
                 try:
-                    translated = await self._translation_provider.translate(
-                        item.text,
-                        target_lang=self._target_lang,
-                        history=list(item.history),
-                    )
+                    translated = await self._translate_request(item)
                 except Exception as exc:
                     self._publish_error(f"Translation failed: {exc}", exc)
                     translated = ""
@@ -583,6 +620,64 @@ class SubtitleWorker(QObject):
                 )
         except asyncio.CancelledError:
             raise
+
+    async def _partial_translation_loop(self) -> None:
+        assert self._partial_translation_event is not None
+        try:
+            while True:
+                await self._partial_translation_event.wait()
+                self._partial_translation_event.clear()
+                await asyncio.sleep(self._partial_translation_interval)
+
+                item = self._latest_partial_request
+                if item is None:
+                    continue
+                if item.text == self._last_partial_translation_text:
+                    continue
+                if len(item.text.strip()) < self._partial_translation_min_chars:
+                    continue
+
+                logfire.debug(
+                    "Translating partial transcript",
+                    segment_id=item.segment_id,
+                    text_chars=len(item.text),
+                    source_version=item.source_version,
+                )
+                try:
+                    translated = await self._translate_request(item)
+                except Exception as exc:
+                    self._publish_error(f"Partial translation failed: {exc}", exc)
+                    continue
+
+                if item.source_version != self._latest_partial_version:
+                    logfire.debug(
+                        "Skipped stale partial translation",
+                        segment_id=item.segment_id,
+                        source_version=item.source_version,
+                        latest_partial_version=self._latest_partial_version,
+                    )
+                    continue
+
+                self._last_partial_translation_text = item.text
+                self.subtitle_changed.emit(item.text, translated, True)
+                logfire.debug(
+                    "Partial translation completed",
+                    segment_id=item.segment_id,
+                    translated_chars=len(translated),
+                )
+        except asyncio.CancelledError:
+            raise
+
+    async def _translate_request(self, item: _TranslationRequest) -> str:
+        semaphore = self._translation_semaphore
+        if semaphore is None:
+            return ""
+        async with semaphore:
+            return await self._translation_provider.translate(
+                item.text,
+                target_lang=self._target_lang,
+                history=list(item.history),
+            )
 
     async def _backpressure_reconnect_loop(self) -> None:
         assert self._reconnect_event is not None
@@ -644,13 +739,24 @@ class SubtitleWorker(QObject):
             segment_id=event.segment_id,
             text_chars=len(text),
         )
+        source_version = self._next_source_version()
         self.subtitle_changed.emit(text, "", True)
+        self._schedule_partial_translation(
+            _TranslationRequest(
+                text=text,
+                segment_id=event.segment_id,
+                history=tuple(self._source_history[-2:]),
+                source_version=source_version,
+                is_partial=True,
+            )
+        )
 
     async def _handle_final_transcript(self, event: TranscriptEvent, text: str) -> None:
         if self._is_duplicate_final(event.segment_id, text):
             logfire.debug("Skipped duplicate final transcript", segment_id=event.segment_id)
             return
 
+        source_version = self._next_source_version()
         history = tuple(self._source_history[-2:])
         self._source_history.append(text)
         if len(self._source_history) > 2:
@@ -663,9 +769,40 @@ class SubtitleWorker(QObject):
             history_size=len(history),
         )
         self.subtitle_changed.emit(text, "", False)
-        await self._translation_queue.put(
-            _FinalTranscript(text=text, segment_id=event.segment_id, history=history)
+        self._enqueue_translation_item(
+            _TranslationRequest(
+                text=text,
+                segment_id=event.segment_id,
+                history=history,
+                source_version=source_version,
+            )
         )
+
+    def _schedule_partial_translation(self, item: _TranslationRequest) -> None:
+        if not self._translate_partials:
+            return
+        event = self._partial_translation_event
+        if event is None:
+            return
+
+        self._latest_partial_request = item
+        self._latest_partial_version = item.source_version
+        event.set()
+
+    def _enqueue_translation_item(self, item: _TranslationRequest) -> None:
+        if self._translation_queue.full():
+            with contextlib.suppress(asyncio.QueueEmpty):
+                self._translation_queue.get_nowait()
+                self._dropped_translation_items += 1
+            logfire.warning(
+                "Translation queue full; dropped stale transcript",
+                dropped_translation_items=self._dropped_translation_items,
+                translation_queue_size=self._translation_queue.qsize(),
+                segment_id=item.segment_id,
+            )
+
+        with contextlib.suppress(asyncio.QueueFull):
+            self._translation_queue.put_nowait(item)
 
     def _is_duplicate_final(self, segment_id: str | None, text: str) -> bool:
         if segment_id:
@@ -680,10 +817,18 @@ class SubtitleWorker(QObject):
         self._final_texts_without_id.add(normalized)
         return False
 
+    def _next_source_version(self) -> int:
+        self._source_version += 1
+        return self._source_version
+
     def _clear_runtime_state(self) -> None:
         self._final_segment_ids.clear()
         self._final_texts_without_id.clear()
         self._source_history.clear()
+        self._source_version = 0
+        self._latest_partial_request = None
+        self._latest_partial_version = 0
+        self._last_partial_translation_text = ""
 
     def _reset_silence_gate_state(self) -> None:
         self._speech_run_frames = 0

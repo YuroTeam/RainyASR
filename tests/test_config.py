@@ -63,6 +63,27 @@ def test_save_env_api_keys_persists_dotenv_and_updates_environment(
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
+def test_env_config_translation_defaults(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config_module, "_env_file_path", lambda: tmp_path / ".env")
+    monkeypatch.setenv("TRANSLATE_MODEL", "")
+    monkeypatch.delenv("TRANSLATE_MODEL", raising=False)
+    monkeypatch.delenv("TRANSLATE_API_KEY", raising=False)
+    monkeypatch.delenv("TRANSLATE_BASE_URL", raising=False)
+    monkeypatch.delenv("DASHSCOPE_COMPATIBLE_BASE_URL", raising=False)
+    monkeypatch.setattr(config_module, "_dotenv_loaded", False)
+
+    assert EnvConfig.translate_model() == "qwen-mt-flash"
+    assert EnvConfig.translate_api_key() == ""
+    assert EnvConfig.translate_base_url() == ""
+    assert (
+        EnvConfig.dashscope_compatible_base_url()
+        == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    )
+
+
 def test_hotkey_config_normalizes_key_sequence() -> None:
     config = HotkeyConfig(toggle_hotkey=" Ctrl + Alt + R ")
 

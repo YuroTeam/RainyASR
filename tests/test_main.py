@@ -193,7 +193,27 @@ class FakeRejectedSettingsDialog(FakeAcceptedSettingsDialog):
 
 
 @pytest.fixture(autouse=True)
-def clear_fakes() -> Iterator[None]:
+def clear_fakes(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    monkeypatch.setattr(
+        main_module.EnvConfig,
+        "dashscope_compatible_base_url",
+        staticmethod(lambda: "dash-compatible-base"),
+    )
+    monkeypatch.setattr(
+        main_module.EnvConfig,
+        "translate_api_key",
+        staticmethod(lambda: ""),
+    )
+    monkeypatch.setattr(
+        main_module.EnvConfig,
+        "translate_base_url",
+        staticmethod(lambda: ""),
+    )
+    monkeypatch.setattr(
+        main_module.EnvConfig,
+        "translate_model",
+        staticmethod(lambda: "qwen-mt-flash"),
+    )
     FakeWorker.instances.clear()
     FakeHotkeyManager.instances.clear()
     FakeAcceptedSettingsDialog.instances.clear()
@@ -345,6 +365,39 @@ async def test_controller_start_wires_audio_worker_providers_and_hotkey(
 
 
 @pytest.mark.asyncio
+async def test_controller_start_uses_dashscope_for_default_qwen_translation(
+    fake_app: FakeApp,
+) -> None:
+    config = _sample_config()
+    detector = FakeAudioDeviceDetector()
+    translation_factory = RecordingProviderFactory("translation")
+
+    controller = RainyASRController(
+        fake_app,
+        config,
+        dashscope_api_key="dash-key",
+        deepseek_api_key="",
+        audio_device_detector=detector,
+        translation_provider_factory=translation_factory,
+        worker_factory=FakeWorker,
+        hotkey_manager_factory=FakeHotkeyManager,
+        tray_available=lambda: False,
+        config_saver=lambda _config: None,
+    )
+
+    assert await controller.start() is True
+
+    assert translation_factory.calls == [
+        (
+            ("dash-key",),
+            {"base_url": "dash-compatible-base", "model": "qwen-mt-flash"},
+        )
+    ]
+
+    await controller.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_controller_start_keeps_running_when_hotkey_backend_fails(
     fake_app: FakeApp,
 ) -> None:
@@ -472,6 +525,30 @@ async def test_controller_start_stays_idle_when_missing_api_key_settings_are_can
     assert messages == []
 
     await controller.shutdown()
+
+
+def test_window_settings_signal_opens_settings(fake_app: FakeApp) -> None:
+    config = _sample_config()
+    controller = RainyASRController(
+        fake_app,
+        config,
+        dashscope_api_key="dash-key",
+        deepseek_api_key="deep-key",
+        audio_device_detector=FakeAudioDeviceDetector(),
+        worker_factory=FakeWorker,
+        hotkey_manager_factory=FakeHotkeyManager,
+        settings_dialog_factory=FakeAcceptedSettingsDialog,
+        tray_available=lambda: False,
+        config_saver=lambda _config: None,
+    )
+
+    fake_app.window.settings_requested.emit()
+
+    assert len(FakeAcceptedSettingsDialog.instances) == 1
+    assert FakeAcceptedSettingsDialog.instances[0].parent is fake_app.window
+    assert fake_app.window._config == config.subtitle
+
+    controller.deleteLater()
 
 
 @pytest.mark.asyncio

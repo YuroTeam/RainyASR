@@ -28,6 +28,7 @@ def _sample_config() -> AppConfig:
             "subtitle": {
                 "font_family": "Inter, Arial, sans-serif",
                 "font_size": 30,
+                "window_width": 1120,
                 "text_color": "#12ABEF",
                 "bg_opacity": 65,
                 "bilingual_mode": False,
@@ -70,6 +71,8 @@ class TestSettingsDialog:
         assert dialog._asr_format_value() == "wav"
         assert dialog._font_family_edit.text() == "Inter, Arial, sans-serif"
         assert dialog._font_size_edit.text() == "30"
+        assert dialog._window_width_edit.text() == "1120"
+        assert dialog._window_width_edit.placeholderText() == "400-1800 px"
         assert dialog._text_color == "#12ABEF"
         assert dialog._bg_opacity_edit.text() == "65"
         assert not dialog._bilingual_mode_check.isChecked()
@@ -106,6 +109,7 @@ class TestSettingsDialog:
 
         dialog._font_family_edit.setText("PingFang SC, sans-serif")
         dialog._font_size_slider.setValue(40)
+        dialog._window_width_edit.setText("1280")
         dialog._text_color = "#00AAFF"
         dialog._refresh_color_button()
         dialog._bg_opacity_edit.setText("45")
@@ -125,6 +129,7 @@ class TestSettingsDialog:
         assert config.asr.asr_format == "pcm"
         assert config.subtitle.font_family == "PingFang SC, sans-serif"
         assert config.subtitle.font_size == 40
+        assert config.subtitle.window_width == 1280
         assert config.subtitle.text_color == "#00AAFF"
         assert config.subtitle.bg_opacity == 45
         assert config.subtitle.bilingual_mode is True

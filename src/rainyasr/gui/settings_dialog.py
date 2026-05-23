@@ -127,7 +127,7 @@ class SettingsDialog(QDialog):
         self._deepseek_key_edit = QLineEdit(tab)
         self._deepseek_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self._deepseek_key_edit.setText(deepseek_api_key)
-        self._add_form_row(form, "DeepSeek API key", self._deepseek_key_edit)
+        self._add_form_row(form, "Translation fallback API key", self._deepseek_key_edit)
 
         return tab
 
@@ -234,6 +234,15 @@ class SettingsDialog(QDialog):
         )
         self._add_form_row(form, "Size", font_size_row)
 
+        window_width_row, self._window_width_edit = self._number_field_row(
+            tab,
+            value=self._config.subtitle.window_width,
+            minimum=400,
+            maximum=1800,
+            unit="px",
+        )
+        self._add_form_row(form, "Window width", window_width_row)
+
         self._text_color_button = QPushButton(tab)
         self._text_color_button.clicked.connect(self._choose_text_color)
         self._refresh_color_button()
@@ -298,6 +307,12 @@ class SettingsDialog(QDialog):
                     label="Font size",
                     minimum=8,
                     maximum=72,
+                ),
+                "window_width": self._number_value(
+                    self._window_width_edit,
+                    label="Window width",
+                    minimum=400,
+                    maximum=1800,
                 ),
                 "text_color": self._text_color,
                 "bg_opacity": self._number_value(

@@ -58,6 +58,7 @@ class SubtitleConfig(BaseModel):
 
     font_family: str = Field(default="PingFang SC, Microsoft YaHei, sans-serif")
     font_size: int = Field(default=24, ge=8, le=72)
+    window_width: int = Field(default=1000, ge=400, le=1800)
     text_color: str = Field(default="#FFFFFF")
     bg_opacity: int = Field(default=80, ge=0, le=100)
     bilingual_mode: bool = Field(default=True)
@@ -164,9 +165,27 @@ class EnvConfig:
         return os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/api/v1")
 
     @staticmethod
+    def dashscope_compatible_base_url() -> str:
+        load_env_file()
+        return os.getenv(
+            "DASHSCOPE_COMPATIBLE_BASE_URL",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        )
+
+    @staticmethod
     def deepseek_base_url() -> str:
         load_env_file()
         return os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+
+    @staticmethod
+    def translate_api_key() -> str:
+        load_env_file()
+        return os.getenv("TRANSLATE_API_KEY", "")
+
+    @staticmethod
+    def translate_base_url() -> str:
+        load_env_file()
+        return os.getenv("TRANSLATE_BASE_URL", "")
 
     @staticmethod
     def asr_model() -> str:
@@ -176,7 +195,7 @@ class EnvConfig:
     @staticmethod
     def translate_model() -> str:
         load_env_file()
-        return os.getenv("TRANSLATE_MODEL", "deepseek-chat")
+        return os.getenv("TRANSLATE_MODEL", "qwen-mt-flash")
 
     @staticmethod
     def logfire_token() -> str | None:

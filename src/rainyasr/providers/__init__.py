@@ -11,11 +11,15 @@ from rainyasr.providers.base import (
     TranslationProvider,
     TranslationProviderError,
 )
-from rainyasr.providers.translate import DeepSeekTranslationProvider
+from rainyasr.providers.translate import (
+    DeepSeekTranslationProvider,
+    OpenAICompatibleTranslationProvider,
+)
 
 __all__ = [
     "ASRProviderError",
     "DeepSeekTranslationProvider",
+    "OpenAICompatibleTranslationProvider",
     "ProviderError",
     "QwenRealtimeASRProvider",
     "RealtimeASRProvider",

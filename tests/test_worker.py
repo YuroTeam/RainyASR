@@ -95,6 +95,30 @@ class FakeTranslationProvider(TranslationProvider):
         return f"{target_lang}:{text}"
 
 
+class BlockingTranslationProvider(FakeTranslationProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.translate_started = asyncio.Event()
+        self.allow_translate = asyncio.Event()
+
+    async def translate(
+        self,
+        text: str,
+        target_lang: str = "zh",
+        history: list[str] | None = None,
+    ) -> str:
+        self.calls.append(
+            TranslationCall(
+                text=text,
+                target_lang=target_lang,
+                history=tuple(history or []),
+            )
+        )
+        self.translate_started.set()
+        await self.allow_translate.wait()
+        return f"{target_lang}:{text}"
+
+
 class FakeAudioDeviceDetector:
     def find_loopback_device(self) -> AudioDeviceInfo:
         return AudioDeviceInfo(
@@ -166,6 +190,38 @@ async def test_partial_updates_subtitle_without_translation(qapp) -> None:
 
 
 @pytest.mark.asyncio
+async def test_partial_transcripts_are_translated_before_final(qapp) -> None:
+    worker, asr, translator = make_worker(partial_translation_interval_ms=10)
+    updates: list[tuple[str, str, bool]] = []
+    worker.subtitle_changed.connect(
+        lambda original, translated, partial: updates.append((original, translated, partial))
+    )
+
+    await worker.start(capture_audio=False)
+    await asr.emit(TranscriptEvent(text="hello world", is_final=False, segment_id="seg-1"))
+
+    await wait_until(lambda: len(translator.calls) == 1)
+    assert translator.calls[0] == TranslationCall("hello world", "zh", ())
+    await wait_until(lambda: ("hello world", "zh:hello world", True) in updates)
+
+    await worker.stop()
+
+
+@pytest.mark.asyncio
+async def test_partial_translation_uses_latest_text_after_throttle(qapp) -> None:
+    worker, asr, translator = make_worker(partial_translation_interval_ms=30)
+
+    await worker.start(capture_audio=False)
+    await asr.emit(TranscriptEvent(text="hello", is_final=False, segment_id="seg-1"))
+    await asr.emit(TranscriptEvent(text="hello world", is_final=False, segment_id="seg-1"))
+
+    await wait_until(lambda: len(translator.calls) == 1)
+    assert translator.calls[0].text == "hello world"
+
+    await worker.stop()
+
+
+@pytest.mark.asyncio
 async def test_final_transcripts_are_translated_with_previous_history(qapp) -> None:
     worker, asr, translator = make_worker(target_lang="ja")
     updates: list[tuple[str, str, bool]] = []
@@ -188,7 +244,7 @@ async def test_final_transcripts_are_translated_with_previous_history(qapp) -> N
 
 @pytest.mark.asyncio
 async def test_translation_history_keeps_only_two_previous_sentences(qapp) -> None:
-    worker, asr, translator = make_worker()
+    worker, asr, translator = make_worker(translation_queue_max_items=10)
 
     await worker.start(capture_audio=False)
     await asr.emit(TranscriptEvent(text="one", is_final=True, segment_id="seg-1"))
@@ -199,6 +255,29 @@ async def test_translation_history_keeps_only_two_previous_sentences(qapp) -> No
     await wait_until(lambda: len(translator.calls) == 4)
     assert translator.calls[2].history == ("one", "two")
     assert translator.calls[3].history == ("two", "three")
+
+    await worker.stop()
+
+
+@pytest.mark.asyncio
+async def test_translation_queue_backpressure_drops_stale_final_transcripts(qapp) -> None:
+    translator = BlockingTranslationProvider()
+    worker, asr, translator = make_worker(
+        translator=translator,
+        translation_queue_max_items=1,
+    )
+
+    await worker.start(capture_audio=False)
+    await asr.emit(TranscriptEvent(text="one", is_final=True, segment_id="seg-1"))
+    await wait_until(lambda: translator.translate_started.is_set())
+
+    await asr.emit(TranscriptEvent(text="two", is_final=True, segment_id="seg-2"))
+    await asr.emit(TranscriptEvent(text="three", is_final=True, segment_id="seg-3"))
+
+    await wait_until(lambda: worker.dropped_translation_items == 1)
+    translator.allow_translate.set()
+
+    await wait_until(lambda: [call.text for call in translator.calls] == ["one", "three"])
 
     await worker.stop()
 
