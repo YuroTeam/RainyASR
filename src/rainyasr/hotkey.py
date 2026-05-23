@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
+from importlib import import_module
 from typing import Protocol
 
 import logfire
@@ -198,13 +199,18 @@ def macos_accessibility_is_trusted() -> bool:
     if sys.platform != "darwin":
         return True
 
-    try:
-        import Quartz
-    except ImportError:
-        logfire.warning("Quartz not installed; skipping macOS accessibility check")
-        return True
+    for module_name in ("ApplicationServices", "Quartz"):
+        try:
+            module = import_module(module_name)
+        except ImportError:
+            continue
 
-    return bool(Quartz.AXIsProcessTrusted())
+        checker = getattr(module, "AXIsProcessTrusted", None)
+        if callable(checker):
+            return bool(checker())
+
+    logfire.warning("macOS accessibility API unavailable; skipping macOS accessibility check")
+    return True
 
 
 def show_macos_accessibility_prompt(

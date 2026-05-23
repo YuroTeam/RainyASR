@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from rainyasr.config import AppConfig, EnvConfig
+from rainyasr.config import AppConfig, EnvConfig, save_env_api_keys
 
 LANGUAGE_OPTIONS = (
     ("zh", "Chinese (zh)"),
@@ -325,7 +325,12 @@ class SettingsDialog(QDialog):
         try:
             config = self.current_config()
             self._validate_required_fields(config)
+            api_keys = self.api_key_values()
             config.save()
+            save_env_api_keys(
+                dashscope_api_key=api_keys.dashscope_api_key,
+                deepseek_api_key=api_keys.deepseek_api_key,
+            )
         except ValidationError as exc:
             self._show_validation_error(str(exc))
             return
@@ -337,7 +342,6 @@ class SettingsDialog(QDialog):
             return
 
         self._config = config
-        api_keys = self.api_key_values()
         self.settings_saved.emit(config)
         self.api_keys_submitted.emit(api_keys.dashscope_api_key, api_keys.deepseek_api_key)
         super().accept()

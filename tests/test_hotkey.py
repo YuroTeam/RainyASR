@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import builtins
 from collections.abc import Callable, Iterator
+from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import Qt
@@ -295,23 +295,36 @@ def test_default_macos_permission_prompt_uses_target_window_parent(
     ]
 
 
-def test_macos_accessibility_check_logs_when_quartz_is_unavailable(
+def test_macos_accessibility_check_uses_application_services(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_import_module(name: str) -> object:
+        if name == "ApplicationServices":
+            return SimpleNamespace(AXIsProcessTrusted=lambda: False)
+        raise ImportError(f"{name} unavailable")
+
+    monkeypatch.setattr(hotkey_module.sys, "platform", "darwin")
+    monkeypatch.setattr(hotkey_module, "import_module", fake_import_module)
+
+    assert hotkey_module.macos_accessibility_is_trusted() is False
+
+
+def test_macos_accessibility_check_logs_when_api_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     warnings = []
-    original_import = builtins.__import__
 
-    def fake_import(name, *args, **kwargs):
-        if name == "Quartz":
-            raise ImportError("Quartz unavailable")
-        return original_import(name, *args, **kwargs)
+    def fake_import_module(name: str) -> object:
+        if name == "ApplicationServices":
+            return SimpleNamespace()
+        raise ImportError(f"{name} unavailable")
 
     monkeypatch.setattr(hotkey_module.sys, "platform", "darwin")
-    monkeypatch.setattr(builtins, "__import__", fake_import)
+    monkeypatch.setattr(hotkey_module, "import_module", fake_import_module)
     monkeypatch.setattr(hotkey_module.logfire, "warning", lambda message: warnings.append(message))
 
     assert hotkey_module.macos_accessibility_is_trusted() is True
-    assert warnings == ["Quartz not installed; skipping macOS accessibility check"]
+    assert warnings == ["macOS accessibility API unavailable; skipping macOS accessibility check"]
 
 
 def test_start_wraps_listener_value_errors(window: QWidget) -> None:

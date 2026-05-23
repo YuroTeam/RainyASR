@@ -181,7 +181,11 @@ class TestSettingsDialog:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         path = tmp_path / "config.toml"
+        env_path = tmp_path / ".env"
         monkeypatch.setattr(config_module, "_config_toml_path", lambda: path)
+        monkeypatch.setattr(config_module, "_env_file_path", lambda: env_path)
+        monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
 
         dialog = SettingsDialog(
             _sample_config(),
@@ -212,6 +216,10 @@ class TestSettingsDialog:
         saved_text = path.read_text(encoding="utf-8")
         assert "dash-updated" not in saved_text
         assert "deep-updated" not in saved_text
+
+        saved_env = env_path.read_text(encoding="utf-8")
+        assert "DASHSCOPE_API_KEY='dash-updated'" in saved_env
+        assert "DEEPSEEK_API_KEY='deep-updated'" in saved_env
 
     def test_reject_does_not_save_config_or_emit_signals(
         self,

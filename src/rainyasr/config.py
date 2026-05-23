@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Literal
 
 import tomli_w
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 from pydantic import BaseModel, Field, field_validator
 
 _dotenv_loaded = False
@@ -22,8 +22,13 @@ def load_env_file() -> None:
     """Load .env once, when environment-backed config is first accessed."""
     global _dotenv_loaded
     if not _dotenv_loaded:
-        load_dotenv()
+        load_dotenv(_env_file_path())
         _dotenv_loaded = True
+
+
+def _env_file_path() -> Path:
+    """Return the path to the project .env file."""
+    return Path(__file__).parent.parent.parent / ".env"
 
 
 def _config_toml_path() -> Path:
@@ -125,6 +130,19 @@ def _dump_toml(data: dict) -> str:
     buf = io.BytesIO()
     tomli_w.dump(data, buf)
     return buf.getvalue().decode("utf-8")
+
+
+def save_env_api_keys(*, dashscope_api_key: str, deepseek_api_key: str) -> None:
+    """Persist API keys to the project .env file and current process env."""
+    path = _env_file_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    set_key(path, "DASHSCOPE_API_KEY", dashscope_api_key)
+    set_key(path, "DEEPSEEK_API_KEY", deepseek_api_key)
+    if os.name != "nt":
+        path.chmod(0o600)
+
+    os.environ["DASHSCOPE_API_KEY"] = dashscope_api_key
+    os.environ["DEEPSEEK_API_KEY"] = deepseek_api_key
 
 
 class EnvConfig:
