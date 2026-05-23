@@ -146,6 +146,8 @@ toggle_hotkey = "ctrl+shift+r"
 target_lang = "zh"
 ```
 
+`hotkey.toggle_hotkey` 使用 `+` 连接按键，必须包含至少一个修饰键。支持的修饰键包括 `ctrl`、`alt`、`shift`、`cmd`；普通键支持字母、数字、`f1`-`f20`，以及 `space`、`enter`、`esc`、方向键、`home/end`、`pageup/pagedown`、`insert`、`delete`、`printscreen`、`pause`、`capslock` 等常用功能键。
+
 敏感配置从环境变量或 `.env` 读取，不会写入 `config/config.toml`。在 Settings 中保存 API Key 时，会同步更新项目根目录 `.env`：
 
 | 环境变量 | 说明 |

@@ -70,6 +70,10 @@ def test_normalize_hotkey_text() -> None:
         ("command+space", "<cmd>+<space>"),
         ("control+option+return", "<ctrl>+<alt>+<enter>"),
         ("win+pgup", "<cmd>+<page_up>"),
+        ("ctrl+insert", "<ctrl>+<insert>"),
+        ("ctrl+printscreen", "<ctrl>+<print_screen>"),
+        ("ctrl+pause", "<ctrl>+<pause>"),
+        ("ctrl+capslock", "<ctrl>+<caps_lock>"),
     ],
 )
 def test_format_pynput_hotkey(hotkey: str, expected: str) -> None:
@@ -354,4 +358,19 @@ def test_start_wraps_listener_runtime_errors(window: QWidget) -> None:
     )
 
     with pytest.raises(HotkeyRegistrationError, match="Failed to register global hotkey"):
+        manager.start()
+
+
+def test_start_reports_missing_keyboard_backend(window: QWidget) -> None:
+    def broken_factory(hotkeys: dict[str, Callable[[], None]]) -> FakeGlobalHotKeys:
+        raise ImportError("No module named 'pynput'")
+
+    manager = GlobalHotkeyManager(
+        window,
+        "ctrl+shift+r",
+        hotkeys_factory=broken_factory,
+        accessibility_checker=lambda: True,
+    )
+
+    with pytest.raises(HotkeyRegistrationError, match="dependency is unavailable"):
         manager.start()

@@ -148,6 +148,8 @@ toggle_hotkey = "ctrl+shift+r"
 target_lang = "zh"
 ```
 
+`hotkey.toggle_hotkey` uses `+`-separated keys and must include at least one modifier. Supported modifiers include `ctrl`, `alt`, `shift`, and `cmd`; regular keys include letters, digits, `f1`-`f20`, and common named keys such as `space`, `enter`, `esc`, arrow keys, `home/end`, `pageup/pagedown`, `insert`, `delete`, `printscreen`, `pause`, and `capslock`.
+
 Sensitive values are read from environment variables or `.env` and are not written to `config/config.toml`. Saving API keys in Settings updates the project-root `.env`:
 
 | Environment variable | Description |

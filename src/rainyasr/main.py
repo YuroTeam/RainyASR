@@ -187,7 +187,7 @@ class RainyASRController(QObject):
 
     def toggle_playback(self) -> None:
         """Start or pause the subtitle worker from the overlay control."""
-        self._schedule_controller_task(self._toggle_playback())
+        self._schedule_controller_task(self._toggle_playback)
 
     async def apply_settings(self, new_config: AppConfig, api_keys: ApiKeyValues) -> None:
         """Apply accepted settings and restart affected runtime components."""
@@ -482,25 +482,26 @@ class RainyASRController(QObject):
     def _set_playback_active(self, active: bool) -> None:
         self._app.window.set_playback_active(active)
 
-    def _schedule_controller_task(self, coroutine: Coroutine[object, object, None]) -> None:
+    def _schedule_controller_task(
+        self,
+        coroutine_factory: Callable[[], Coroutine[object, object, None]],
+    ) -> None:
         loop = self._app.loop
         if loop.is_running() and not loop.is_closed():
-            loop.create_task(coroutine)
+            loop.create_task(coroutine_factory())
             return
 
         try:
             running_loop = asyncio.get_running_loop()
         except RuntimeError:
-            coroutine.close()
-            logfire.warning("Cannot toggle playback because no event loop is running")
+            logfire.warning("Cannot schedule controller task because no event loop is running")
             return
 
         if running_loop.is_closed():
-            coroutine.close()
-            logfire.warning("Cannot toggle playback because the event loop is closed")
+            logfire.warning("Cannot schedule controller task because the event loop is closed")
             return
 
-        running_loop.create_task(coroutine)
+        running_loop.create_task(coroutine_factory())
 
     @staticmethod
     def _default_message_presenter(
@@ -523,6 +524,11 @@ class RainyASRController(QObject):
         new_dashscope_api_key: str,
         new_deepseek_api_key: str,
     ) -> bool:
+        """Return whether settings changed for components owned by the worker.
+
+        Subtitle appearance is applied directly to the window, so it does not require
+        rebuilding audio capture, ASR, or translation providers.
+        """
         return (
             old_config.audio != new_config.audio
             or old_config.asr != new_config.asr
@@ -567,6 +573,8 @@ def install_terminal_signal_handlers(
 
     signal_poll_timer = QTimer(controller)
     signal_poll_timer.setInterval(poll_interval_ms)
+    # Periodic Python bytecode execution gives Python signal handlers a chance to run
+    # while Qt owns the native event loop.
     signal_poll_timer.timeout.connect(lambda: None)
     signal_poll_timer.start()
     return signal_poll_timer

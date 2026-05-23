@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtWidgets import QApplication, QDialog, QSystemTrayIcon
 
 from rainyasr import main as main_module
 from rainyasr.audio.capture import AudioDeviceInfo, NoLoopbackDeviceError
@@ -553,6 +553,31 @@ def test_window_settings_signal_opens_settings(fake_app: FakeApp) -> None:
     assert FakeAcceptedSettingsDialog.instances[0].parent is fake_app.window
     assert fake_app.window._config == config.subtitle
 
+    controller.deleteLater()
+
+
+def test_tray_activation_toggles_window_visibility(fake_app: FakeApp) -> None:
+    controller = RainyASRController(
+        fake_app,
+        _sample_config(),
+        dashscope_api_key="dash-key",
+        deepseek_api_key="deep-key",
+        audio_device_detector=FakeAudioDeviceDetector(),
+        worker_factory=FakeWorker,
+        hotkey_manager_factory=FakeHotkeyManager,
+        tray_available=lambda: False,
+        config_saver=lambda _config: None,
+    )
+    fake_app.window.update_subtitle("Hello", "你好")
+    fake_app.window.show()
+
+    controller._handle_tray_activated(QSystemTrayIcon.ActivationReason.Trigger)
+
+    assert not fake_app.window.isVisible()
+
+    controller._handle_tray_activated(QSystemTrayIcon.ActivationReason.DoubleClick)
+
+    assert fake_app.window.isVisible()
     controller.deleteLater()
 
 

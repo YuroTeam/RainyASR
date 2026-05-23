@@ -50,6 +50,8 @@ _MODIFIER_ALIASES = {
 _MODIFIER_TOKENS = frozenset(f"<{name}>" for name in {"alt", "cmd", "ctrl", "shift"})
 _NAMED_KEY_ALIASES = {
     "backspace": "backspace",
+    "capslock": "caps_lock",
+    "caps_lock": "caps_lock",
     "del": "delete",
     "delete": "delete",
     "down": "down",
@@ -58,11 +60,16 @@ _NAMED_KEY_ALIASES = {
     "esc": "esc",
     "escape": "esc",
     "home": "home",
+    "ins": "insert",
+    "insert": "insert",
     "left": "left",
     "pagedown": "page_down",
     "pageup": "page_up",
+    "pause": "pause",
     "pgdn": "page_down",
     "pgup": "page_up",
+    "printscreen": "print_screen",
+    "prtsc": "print_screen",
     "return": "enter",
     "right": "right",
     "space": "space",
@@ -133,6 +140,12 @@ class GlobalHotkeyManager(QObject):
         try:
             listener = self._hotkeys_factory({self._pynput_hotkey: self._request_toggle})
             listener.start()
+        except ImportError as exc:
+            msg = (
+                f"Failed to register global hotkey {self._registered_hotkey!r}: "
+                f"keyboard backend dependency is unavailable: {exc}"
+            )
+            raise HotkeyRegistrationError(msg) from exc
         except ValueError as exc:
             msg = f"Invalid global hotkey {self._registered_hotkey!r}: {exc}"
             raise HotkeyRegistrationError(msg) from exc

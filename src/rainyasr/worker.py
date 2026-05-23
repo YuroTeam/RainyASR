@@ -90,6 +90,7 @@ class SubtitleWorker(QObject):
         speech_start_frames: int = 2,
         silence_stop_ms: int = 3000,
         preroll_ms: int = 500,
+        shutdown_task_timeout_s: float = 2.0,
     ) -> None:
         super().__init__()
         if sample_rate <= 0:
@@ -116,6 +117,8 @@ class SubtitleWorker(QObject):
             raise ValueError("silence_stop_ms must be positive")
         if preroll_ms < 0:
             raise ValueError("preroll_ms must be non-negative")
+        if shutdown_task_timeout_s <= 0:
+            raise ValueError("shutdown_task_timeout_s must be positive")
 
         self._asr_provider = asr_provider
         self._translation_provider = translation_provider
@@ -133,6 +136,7 @@ class SubtitleWorker(QObject):
         self._speech_start_frames = speech_start_frames
         self._silence_stop_frames = max(1, ceil(silence_stop_ms / frame_ms))
         self._preroll_max_frames = max(0, ceil(preroll_ms / frame_ms))
+        self._shutdown_task_timeout = shutdown_task_timeout_s
 
         self._audio_device_detector = audio_device_detector or AudioDeviceDetector()
         self._audio_stream_factory = audio_stream_factory or sd.InputStream
@@ -619,6 +623,7 @@ class SubtitleWorker(QObject):
                     translated = await self._translate_request(item)
                 except Exception as exc:
                     self._publish_error(f"Translation failed: {exc}", exc)
+                    # Keep the source subtitle visible when only translation failed.
                     translated = ""
 
                 self.subtitle_changed.emit(item.text, translated, False)
@@ -884,7 +889,7 @@ class SubtitleWorker(QObject):
         if task is None or task is self._current_task_or_none():
             return
         try:
-            await asyncio.wait_for(task, timeout=2.0)
+            await asyncio.wait_for(task, timeout=self._shutdown_task_timeout)
         except asyncio.CancelledError:
             if task.cancelled():
                 return

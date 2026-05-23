@@ -142,6 +142,7 @@ class SettingsDialog(QDialog):
             minimum=8000,
             maximum=48000,
             unit="Hz",
+            accessible_name="Sample rate value",
         )
         self._add_form_row(form, "Sample rate", sample_rate_row)
 
@@ -161,6 +162,7 @@ class SettingsDialog(QDialog):
             minimum=20,
             maximum=500,
             unit="ms",
+            accessible_name="Frame length value",
         )
         self._add_form_row(form, "Frame length", frame_ms_row)
 
@@ -170,6 +172,7 @@ class SettingsDialog(QDialog):
             minimum=10,
             maximum=1000,
             unit="frames",
+            accessible_name="Queue max value",
         )
         self._add_form_row(form, "Queue max", audio_queue_row)
 
@@ -180,6 +183,7 @@ class SettingsDialog(QDialog):
             maximum=1.0,
             decimals=6,
             unit="RMS",
+            accessible_name="Silence threshold value",
         )
         self._add_form_row(form, "Silence threshold", silence_threshold_row)
 
@@ -241,6 +245,7 @@ class SettingsDialog(QDialog):
             minimum=8,
             maximum=72,
             value=self._config.subtitle.font_size,
+            accessible_name="Font size value",
         )
         self._add_form_row(form, "Size", font_size_row)
 
@@ -250,6 +255,7 @@ class SettingsDialog(QDialog):
             minimum=400,
             maximum=1800,
             unit="px",
+            accessible_name="Window width value",
         )
         self._add_form_row(form, "Window width", window_width_row)
 
@@ -263,6 +269,7 @@ class SettingsDialog(QDialog):
             minimum=0,
             maximum=100,
             value=self._config.subtitle.bg_opacity,
+            accessible_name="Background opacity value",
         )
         self._add_form_row(form, "Background", opacity_row)
 
@@ -566,6 +573,7 @@ class SettingsDialog(QDialog):
         minimum: int,
         maximum: int,
         unit: str,
+        accessible_name: str,
     ) -> tuple[QWidget, QLineEdit]:
         row = QWidget(parent)
         layout = QHBoxLayout(row)
@@ -578,7 +586,7 @@ class SettingsDialog(QDialog):
         edit.setValidator(QIntValidator(minimum, maximum, edit))
         edit.setText(str(value))
         edit.setPlaceholderText(f"{minimum}-{maximum} {unit}")
-        edit.setAccessibleName(unit)
+        edit.setAccessibleName(accessible_name)
         edit.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         unit_label = QLabel(unit, row)
@@ -598,6 +606,7 @@ class SettingsDialog(QDialog):
         maximum: float,
         decimals: int,
         unit: str,
+        accessible_name: str,
     ) -> tuple[QWidget, QLineEdit]:
         row = QWidget(parent)
         layout = QHBoxLayout(row)
@@ -612,7 +621,7 @@ class SettingsDialog(QDialog):
         edit.setValidator(validator)
         edit.setText(f"{value:.6g}")
         edit.setPlaceholderText(f"{minimum:.0f}-{maximum:.0f} {unit}")
-        edit.setAccessibleName(unit)
+        edit.setAccessibleName(accessible_name)
         edit.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         unit_label = QLabel(unit, row)
@@ -656,6 +665,7 @@ class SettingsDialog(QDialog):
         minimum: int,
         maximum: int,
         value: int,
+        accessible_name: str,
     ) -> tuple[QWidget, QSlider, QLineEdit]:
         row = QWidget(parent)
         layout = QHBoxLayout(row)
@@ -672,17 +682,24 @@ class SettingsDialog(QDialog):
         edit.setValidator(QIntValidator(minimum, maximum, edit))
         edit.setText(str(value))
         edit.setFixedWidth(72)
+        edit.setAccessibleName(accessible_name)
 
         def apply_edit_value() -> None:
             value_text = edit.text().strip()
-            if not value_text:
+            if not value_text or not edit.hasAcceptableInput():
                 edit.setText(str(slider.value()))
                 return
             new_value = min(max(int(value_text), minimum), maximum)
             edit.setText(str(new_value))
             slider.setValue(new_value)
 
+        def sync_slider_from_edit(value_text: str) -> None:
+            if not value_text.strip() or not edit.hasAcceptableInput():
+                return
+            slider.setValue(int(value_text))
+
         slider.valueChanged.connect(lambda next_value: edit.setText(str(next_value)))
+        edit.textChanged.connect(sync_slider_from_edit)
         edit.editingFinished.connect(apply_edit_value)
 
         layout.addWidget(slider, 1)
@@ -764,6 +781,7 @@ class SettingsDialog(QDialog):
         data = combo.currentData()
         if combo.isEditable():
             current_index = combo.currentIndex()
+            # Editable combos can keep the last item data while showing custom typed text.
             if current_index < 0 or combo.currentText() != combo.itemText(current_index):
                 return combo.currentText().strip()
         if data is not None:

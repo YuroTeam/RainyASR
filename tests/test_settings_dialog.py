@@ -62,22 +62,29 @@ class TestSettingsDialog:
 
         assert dialog._sample_rate_edit.text() == "24000"
         assert dialog._sample_rate_edit.placeholderText() == "8000-48000 Hz"
+        assert dialog._sample_rate_edit.accessibleName() == "Sample rate value"
         assert dialog._channels_group.checkedId() == 2
         assert dialog._frame_ms_edit.text() == "50"
+        assert dialog._frame_ms_edit.accessibleName() == "Frame length value"
         assert dialog._frame_ms_edit.placeholderText() == "20-500 ms"
         assert dialog._audio_queue_edit.text() == "120"
+        assert dialog._audio_queue_edit.accessibleName() == "Queue max value"
         assert dialog._audio_queue_edit.placeholderText() == "10-1000 frames"
         assert dialog._silence_threshold_edit.text() == "0.0007"
+        assert dialog._silence_threshold_edit.accessibleName() == "Silence threshold value"
         assert dialog._silence_threshold_edit.placeholderText() == "0-1 RMS"
         assert dialog._asr_model_edit.text() == "custom-asr"
         assert dialog._combo_value(dialog._asr_language_combo) == "en"
         assert dialog._asr_format_value() == "wav"
         assert dialog._font_family_edit.text() == "Inter, Arial, sans-serif"
         assert dialog._font_size_edit.text() == "30"
+        assert dialog._font_size_edit.accessibleName() == "Font size value"
         assert dialog._window_width_edit.text() == "1120"
+        assert dialog._window_width_edit.accessibleName() == "Window width value"
         assert dialog._window_width_edit.placeholderText() == "400-1800 px"
         assert dialog._text_color == "#12ABEF"
         assert dialog._bg_opacity_edit.text() == "65"
+        assert dialog._bg_opacity_edit.accessibleName() == "Background opacity value"
         assert not dialog._bilingual_mode_check.isChecked()
         assert dialog._combo_value(dialog._target_lang_combo) == "en"
 
@@ -141,6 +148,16 @@ class TestSettingsDialog:
         assert config.hotkey.toggle_hotkey == "ctrl+alt+s"
         assert config.language.target_lang == "ja"
 
+    def test_slider_fields_sync_when_text_changes_before_editing_finished(
+        self,
+        dialog: SettingsDialog,
+    ) -> None:
+        dialog._font_size_edit.setText("42")
+        dialog._bg_opacity_edit.setText("55")
+
+        assert dialog._font_size_slider.value() == 42
+        assert dialog._bg_opacity_slider.value() == 55
+
     @pytest.mark.parametrize(
         ("value", "message"),
         [
@@ -177,6 +194,16 @@ class TestSettingsDialog:
         dialog._silence_threshold_edit.setText(value)
 
         with pytest.raises(ValueError, match=message):
+            dialog.current_config()
+
+    def test_invalid_hotkey_is_rejected(
+        self,
+        dialog: SettingsDialog,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(dialog, "_hotkey_text", lambda: "ctrl++r")
+
+        with pytest.raises(ValueError, match="Hotkey segments cannot be empty"):
             dialog.current_config()
 
     def test_invalid_initial_asr_format_is_not_silently_rewritten(self, qtbot) -> None:
