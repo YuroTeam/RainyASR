@@ -74,6 +74,20 @@ uv run ruff check --fix src/
 uv run ruff format src/
 ```
 
+### 运行测试
+
+```bash
+# 运行所有测试
+uv run pytest
+
+# 运行特定模块测试
+uv run pytest tests/test_subtitle_window.py -v
+uv run pytest tests/test_translate_provider.py -v
+
+# 带覆盖率报告
+uv run pytest --cov=src/rainyasr --cov-report=term-missing
+```
+
 ### 手动运行 pre-commit（可选）
 
 ```bash
@@ -128,6 +142,69 @@ uv run python src/rainyasr/main.py
 ├── uv.lock               # 依赖锁定文件
 └── README.md
 ```
+
+## 手动验证脚本
+
+项目提供了一系列手动验证脚本，用于独立测试各模块：
+
+| 脚本 | 功能 | 运行方式 |
+|---|---|---|
+| `scripts/test_capture.py` | 音频设备检测 + 10 秒录音测试 | `uv run python scripts/test_capture.py` |
+| `scripts/test_asr.py` | 发送测试音频到 DashScope 实时 ASR | `DASHSCOPE_API_KEY=xxx uv run python scripts/test_asr.py` |
+| `scripts/test_translate.py` | 翻译 Provider 交互测试 | `uv run python scripts/test_translate.py` |
+| `scripts/demo_subtitle.py` | 悬浮字幕窗口视觉预览 | `uv run python scripts/demo_subtitle.py` |
+| `scripts/verify_subtitle_window.py` | 三端字幕窗口生命周期与窗口行为验证 | `uv run python scripts/verify_subtitle_window.py` |
+
+### 字幕窗口视觉验证
+
+```bash
+uv run python scripts/demo_subtitle.py
+```
+
+启动后会弹出 3 个悬浮字幕窗口，可验证：
+- 窗口始终置顶（切换到其他应用仍可见）
+- 鼠标拖拽移动窗口位置
+- 鼠标移入窗口后显示关闭按钮，关闭当前字幕窗口
+- 所有字幕窗口都关闭后，demo 进程退出
+- 双语 / 单语模式切换
+- 不同字体大小和配色效果
+
+### 字幕窗口三端验证
+
+`SubtitleWindow` 的关闭按钮、`close_requested` / `closed` 生命周期信号、空字幕自动隐藏等逻辑是跨平台通用实现；Windows / Linux / macOS 都走同一套 Qt 代码。macOS 额外调用 AppKit 设置全屏 Spaces 覆盖行为；Windows 和 Linux 目前依赖 Qt 的 `FramelessWindowHint`, `WindowStaysOnTopHint`, `WindowDoesNotAcceptFocus`, `Tool` 等窗口标志。Linux 不同桌面环境 / Wayland compositor 对置顶窗口的策略可能不同，所以必须在目标桌面上做一次人工验证。
+
+自动测试（三端都运行）：
+
+```bash
+uv run pytest tests/test_subtitle_window.py tests/test_demo_subtitle.py -q
+```
+
+自动 smoke 验证（三端都运行）：会创建 3 个字幕窗口，自动关闭第一个并确认另外两个仍然存在，最后关闭全部窗口并退出。
+
+```bash
+# macOS / Linux
+uv run python scripts/verify_subtitle_window.py --smoke
+
+# Windows PowerShell
+uv run python .\scripts\verify_subtitle_window.py --smoke
+```
+
+人工视觉验证（三端都运行）：用于确认置顶、拖拽、hover 关闭按钮、关闭单个窗口不退出进程等窗口管理器行为。
+
+```bash
+# macOS / Linux
+uv run python scripts/verify_subtitle_window.py
+
+# Windows PowerShell
+uv run python .\scripts\verify_subtitle_window.py
+```
+
+人工检查项：
+- 关闭任意一个字幕窗口时，只关闭当前窗口，其他字幕窗口继续显示。
+- 关闭所有字幕窗口后，验证脚本进程退出。
+- 拖拽窗口位置正常，窗口无系统边框。
+- 切换到普通应用窗口后，字幕仍保持在普通窗口之上。
+- Linux 需要分别在实际目标环境验证，例如 GNOME/X11、GNOME/Wayland、KDE/Wayland；如遇到置顶失效，需要记录桌面环境和显示协议。
 
 ## 平台注意事项
 
