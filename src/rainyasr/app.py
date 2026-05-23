@@ -35,10 +35,12 @@ class RainyASRApp:
         subtitle_config: SubtitleConfig | None = None,
         *,
         configure_overlay_app: bool | None = None,
+        quit_on_window_close: bool = True,
     ) -> None:
         existing = QApplication.instance()
         owns_qapplication = existing is None
         self._app = existing if existing else QApplication(sys.argv)
+        self._quit_on_window_close = quit_on_window_close
 
         should_configure_overlay = (
             owns_qapplication if configure_overlay_app is None else configure_overlay_app
@@ -64,7 +66,13 @@ class RainyASRApp:
                 asyncio.set_event_loop(previous_event_loop_owner.loop)
                 RainyASRApp._current_event_loop_owner = previous_event_loop_owner
             raise
-        self._window.closed.connect(self._handle_window_closed)
+        if self._quit_on_window_close:
+            self._window.closed.connect(self._handle_window_closed)
+
+    @property
+    def qapplication(self) -> QApplication:
+        """The underlying QApplication instance."""
+        return self._app
 
     @property
     def window(self) -> SubtitleWindow:

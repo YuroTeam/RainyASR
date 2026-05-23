@@ -2,7 +2,7 @@
 
 Examples:
     uv run python scripts/test_worker.py --fake
-    DASHSCOPE_API_KEY=... DEEPSEEK_API_KEY=... uv run python scripts/test_worker.py --real
+    DASHSCOPE_API_KEY=... uv run python scripts/test_worker.py --real
     uv run python scripts/test_worker.py --real --silence-rms-threshold 0.003
 """
 
@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QApplication
 
 from rainyasr.config import AppConfig, EnvConfig
 from rainyasr.gui.subtitle_window import SubtitleWindow, configure_macos_overlay_app
-from rainyasr.providers import DeepSeekTranslationProvider, QwenRealtimeASRProvider
+from rainyasr.providers import OpenAICompatibleTranslationProvider, QwenRealtimeASRProvider
 from rainyasr.providers.base import RealtimeASRProvider, TranscriptEvent, TranslationProvider
 from rainyasr.worker import SubtitleWorker
 
@@ -93,6 +93,7 @@ async def run_fake(app: QApplication) -> None:
     window = SubtitleWindow()
     asr = FakeASRProvider()
     translator = FakeTranslationProvider()
+
     worker = SubtitleWorker(
         asr_provider=asr,
         translation_provider=translator,
@@ -112,15 +113,35 @@ async def run_fake(app: QApplication) -> None:
 
 async def run_real(args: argparse.Namespace) -> None:
     dashscope_key = EnvConfig.dashscope_api_key()
-    deepseek_key = EnvConfig.deepseek_api_key()
     if not dashscope_key:
         print("[ERROR] DASHSCOPE_API_KEY is not set.", file=sys.stderr)
         raise SystemExit(1)
-    if not deepseek_key:
-        print("[ERROR] DEEPSEEK_API_KEY is not set.", file=sys.stderr)
-        raise SystemExit(1)
 
     config = AppConfig.load()
+    translation_model = EnvConfig.translate_model()
+    translation_key = EnvConfig.translate_api_key()
+    if not translation_key and OpenAICompatibleTranslationProvider.is_qwen_model(translation_model):
+        translation_key = dashscope_key
+    if not translation_key:
+        translation_key = EnvConfig.deepseek_api_key()
+    if not translation_key:
+        print("[ERROR] translation API key is not set.", file=sys.stderr)
+        raise SystemExit(1)
+
+    translation_base_url = EnvConfig.translate_base_url()
+    if not translation_base_url and OpenAICompatibleTranslationProvider.is_qwen_model(
+        translation_model
+    ):
+        translation_base_url = EnvConfig.dashscope_compatible_base_url()
+    if not translation_base_url:
+        translation_base_url = EnvConfig.deepseek_base_url()
+
+    silence_rms_threshold = (
+        args.silence_rms_threshold
+        if args.silence_rms_threshold is not None
+        else config.audio.silence_rms_threshold
+    )
+
     window = SubtitleWindow(config.subtitle)
     asr = QwenRealtimeASRProvider(
         api_key=dashscope_key,
@@ -128,10 +149,10 @@ async def run_real(args: argparse.Namespace) -> None:
         sample_rate=config.audio.sample_rate,
         language=config.asr.asr_language,
     )
-    translator = DeepSeekTranslationProvider(
-        api_key=deepseek_key,
-        base_url=EnvConfig.deepseek_base_url(),
-        model=EnvConfig.translate_model(),
+    translator = OpenAICompatibleTranslationProvider(
+        api_key=translation_key,
+        base_url=translation_base_url,
+        model=translation_model,
     )
     worker = SubtitleWorker(
         asr_provider=asr,
@@ -143,7 +164,7 @@ async def run_real(args: argparse.Namespace) -> None:
         frame_ms=config.audio.frame_ms,
         audio_queue_max_frames=config.audio.audio_queue_max_frames,
         enable_silence_gate=not args.disable_silence_gate,
-        silence_rms_threshold=args.silence_rms_threshold,
+        silence_rms_threshold=silence_rms_threshold,
         speech_start_frames=args.speech_start_frames,
         silence_stop_ms=args.silence_stop_ms,
         preroll_ms=args.preroll_ms,
@@ -155,7 +176,7 @@ async def run_real(args: argparse.Namespace) -> None:
     print(
         "[real] Worker running. "
         f"silence_gate={not args.disable_silence_gate}, "
-        f"threshold={args.silence_rms_threshold}, "
+        f"threshold={silence_rms_threshold}, "
         f"silence_stop_ms={args.silence_stop_ms}, "
         f"preroll_ms={args.preroll_ms}. "
         "Press Ctrl+C to stop."
@@ -185,7 +206,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--silence-rms-threshold",
         type=float,
-        default=0.005,
+        default=None,
         help="Local RMS threshold that opens the ASR gate",
     )
     parser.add_argument(

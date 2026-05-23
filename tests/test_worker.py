@@ -68,6 +68,18 @@ class BlockingSendASRProvider(FakeASRProvider):
         await super().send_audio(pcm_bytes)
 
 
+class FailingSendASRProvider(FakeASRProvider):
+    async def send_audio(self, pcm_bytes: bytes) -> None:
+        raise RuntimeError("send failed")
+
+
+class FailingReconnectASRProvider(FakeASRProvider):
+    async def start(self) -> None:
+        self.started += 1
+        if self.started > 1:
+            raise RuntimeError("reconnect failed")
+
+
 @dataclass(frozen=True)
 class TranslationCall:
     text: str
@@ -92,6 +104,30 @@ class FakeTranslationProvider(TranslationProvider):
                 history=tuple(history or []),
             )
         )
+        return f"{target_lang}:{text}"
+
+
+class BlockingTranslationProvider(FakeTranslationProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.translate_started = asyncio.Event()
+        self.allow_translate = asyncio.Event()
+
+    async def translate(
+        self,
+        text: str,
+        target_lang: str = "zh",
+        history: list[str] | None = None,
+    ) -> str:
+        self.calls.append(
+            TranslationCall(
+                text=text,
+                target_lang=target_lang,
+                history=tuple(history or []),
+            )
+        )
+        self.translate_started.set()
+        await self.allow_translate.wait()
         return f"{target_lang}:{text}"
 
 
@@ -148,6 +184,11 @@ def make_worker(
     return worker, fake_asr, fake_translator
 
 
+def test_shutdown_task_timeout_must_be_positive(qapp) -> None:
+    with pytest.raises(ValueError, match="shutdown_task_timeout_s must be positive"):
+        make_worker(shutdown_task_timeout_s=0)
+
+
 @pytest.mark.asyncio
 async def test_partial_updates_subtitle_without_translation(qapp) -> None:
     worker, asr, translator = make_worker()
@@ -161,6 +202,64 @@ async def test_partial_updates_subtitle_without_translation(qapp) -> None:
 
     await wait_until(lambda: updates == [("hel", "", True)])
     assert translator.calls == []
+
+    await worker.stop()
+
+
+@pytest.mark.asyncio
+async def test_partial_transcripts_are_translated_before_final(qapp) -> None:
+    worker, asr, translator = make_worker(partial_translation_interval_ms=10)
+    updates: list[tuple[str, str, bool]] = []
+    worker.subtitle_changed.connect(
+        lambda original, translated, partial: updates.append((original, translated, partial))
+    )
+
+    await worker.start(capture_audio=False)
+    await asr.emit(TranscriptEvent(text="hello world", is_final=False, segment_id="seg-1"))
+
+    await wait_until(lambda: len(translator.calls) == 1)
+    assert translator.calls[0] == TranslationCall("hello world", "zh", ())
+    await wait_until(lambda: ("hello world", "zh:hello world", True) in updates)
+
+    await worker.stop()
+
+
+@pytest.mark.asyncio
+async def test_partial_translation_uses_latest_text_after_throttle(qapp) -> None:
+    worker, asr, translator = make_worker(partial_translation_interval_ms=30)
+
+    await worker.start(capture_audio=False)
+    await asr.emit(TranscriptEvent(text="hello", is_final=False, segment_id="seg-1"))
+    await asr.emit(TranscriptEvent(text="hello world", is_final=False, segment_id="seg-1"))
+
+    await wait_until(lambda: len(translator.calls) == 1)
+    assert translator.calls[0].text == "hello world"
+
+    await worker.stop()
+
+
+@pytest.mark.asyncio
+async def test_stale_partial_translation_result_is_not_emitted(qapp) -> None:
+    translator = BlockingTranslationProvider()
+    worker, asr, translator = make_worker(
+        translator=translator,
+        partial_translation_interval_ms=10,
+    )
+    updates: list[tuple[str, str, bool]] = []
+    worker.subtitle_changed.connect(
+        lambda original, translated, partial: updates.append((original, translated, partial))
+    )
+
+    await worker.start(capture_audio=False)
+    await asr.emit(TranscriptEvent(text="hello", is_final=False, segment_id="seg-1"))
+    await wait_until(lambda: translator.translate_started.is_set())
+
+    await asr.emit(TranscriptEvent(text="hello world", is_final=False, segment_id="seg-1"))
+    translator.allow_translate.set()
+
+    await wait_until(lambda: len(translator.calls) == 2)
+    await wait_until(lambda: ("hello world", "zh:hello world", True) in updates)
+    assert ("hello", "zh:hello", True) not in updates
 
     await worker.stop()
 
@@ -188,7 +287,7 @@ async def test_final_transcripts_are_translated_with_previous_history(qapp) -> N
 
 @pytest.mark.asyncio
 async def test_translation_history_keeps_only_two_previous_sentences(qapp) -> None:
-    worker, asr, translator = make_worker()
+    worker, asr, translator = make_worker(translation_queue_max_items=10)
 
     await worker.start(capture_audio=False)
     await asr.emit(TranscriptEvent(text="one", is_final=True, segment_id="seg-1"))
@@ -199,6 +298,29 @@ async def test_translation_history_keeps_only_two_previous_sentences(qapp) -> No
     await wait_until(lambda: len(translator.calls) == 4)
     assert translator.calls[2].history == ("one", "two")
     assert translator.calls[3].history == ("two", "three")
+
+    await worker.stop()
+
+
+@pytest.mark.asyncio
+async def test_translation_queue_backpressure_drops_stale_final_transcripts(qapp) -> None:
+    translator = BlockingTranslationProvider()
+    worker, asr, translator = make_worker(
+        translator=translator,
+        translation_queue_max_items=1,
+    )
+
+    await worker.start(capture_audio=False)
+    await asr.emit(TranscriptEvent(text="one", is_final=True, segment_id="seg-1"))
+    await wait_until(lambda: translator.translate_started.is_set())
+
+    await asr.emit(TranscriptEvent(text="two", is_final=True, segment_id="seg-2"))
+    await asr.emit(TranscriptEvent(text="three", is_final=True, segment_id="seg-3"))
+
+    await wait_until(lambda: worker.dropped_translation_items == 1)
+    translator.allow_translate.set()
+
+    await wait_until(lambda: [call.text for call in translator.calls] == ["one", "three"])
 
     await worker.stop()
 
@@ -304,6 +426,46 @@ async def test_audio_queue_backpressure_reconnects_active_asr_session(qapp) -> N
     await wait_until(lambda: asr.started == 2 and asr.stopped == 1)
 
     await worker.stop()
+
+
+@pytest.mark.asyncio
+async def test_audio_sender_failure_stops_worker_from_own_task(qapp) -> None:
+    asr = FailingSendASRProvider()
+    worker, asr, _translator = make_worker(asr=asr)
+    errors: list[str] = []
+    states: list[str] = []
+    worker.error_occurred.connect(errors.append)
+    worker.state_changed.connect(states.append)
+
+    await worker.start(capture_audio=False)
+    worker._enqueue_audio_bytes(b"bad-frame")
+
+    await wait_until(lambda: not worker.is_running and bool(errors))
+
+    assert errors == ["Audio sender failed: send failed"]
+    assert states[-1] == "stopped"
+    assert asr.stopped == 1
+
+
+@pytest.mark.asyncio
+async def test_backpressure_reconnect_failure_stops_worker(qapp) -> None:
+    asr = FailingReconnectASRProvider()
+    worker, asr, _translator = make_worker(
+        asr=asr,
+        backpressure_reconnect_threshold=1,
+    )
+    errors: list[str] = []
+    worker.error_occurred.connect(errors.append)
+
+    await worker.start(capture_audio=False)
+    worker._consecutive_audio_drops = 1
+    worker._request_asr_reconnect_if_needed()
+
+    await wait_until(lambda: not worker.is_running and bool(errors))
+
+    assert errors == ["ASR reconnect failed: reconnect failed"]
+    assert asr.started == 2
+    assert asr.stopped >= 1
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,7 @@ sample_rate = 16000
 channels = 1
 frame_ms = 100
 audio_queue_max_frames = 100
+silence_rms_threshold = 0.0003
 
 [asr]
 asr_model = "qwen3-asr-flash-realtime"
@@ -11,7 +12,8 @@ asr_language = "auto"
 
 [subtitle]
 font_family = "PingFang SC, Microsoft YaHei, sans-serif"
-font_size = 24
+font_size = 20
+window_width = 1000
 text_color = "#FFFFFF"
 bg_opacity = 80
 bilingual_mode = true

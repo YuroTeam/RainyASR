@@ -56,6 +56,29 @@ class TestStart:
         assert data["session"]["modalities"] == ["text"]
         assert data["session"]["input_audio_format"] == "pcm"
         assert data["session"]["sample_rate"] == 16000
+        assert data["session"]["input_audio_transcription"] == {}
+
+    @pytest.mark.asyncio
+    async def test_omits_language_when_configured_as_auto(self) -> None:
+        provider = QwenRealtimeASRProvider(api_key="test-key", language="auto")
+        mock_ws = _MockWebSocket()
+
+        with patch("rainyasr.providers.asr.websockets.connect", AsyncMock(return_value=mock_ws)):
+            await provider.start()
+
+        data = json.loads(mock_ws.send.call_args_list[0][0][0])
+        assert "language" not in data["session"]["input_audio_transcription"]
+
+    @pytest.mark.asyncio
+    async def test_sends_explicit_language_when_configured(self) -> None:
+        provider = QwenRealtimeASRProvider(api_key="test-key", language="ZH")
+        mock_ws = _MockWebSocket()
+
+        with patch("rainyasr.providers.asr.websockets.connect", AsyncMock(return_value=mock_ws)):
+            await provider.start()
+
+        data = json.loads(mock_ws.send.call_args_list[0][0][0])
+        assert data["session"]["input_audio_transcription"]["language"] == "zh"
 
     @pytest.mark.asyncio
     async def test_raises_asr_error_on_connection_failure(

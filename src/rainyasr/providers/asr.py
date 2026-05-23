@@ -104,9 +104,7 @@ class QwenRealtimeASRProvider(RealtimeASRProvider):
                 "modalities": ["text"],
                 "input_audio_format": "pcm",
                 "sample_rate": self._sample_rate,
-                "input_audio_transcription": {
-                    "language": self._language,
-                },
+                "input_audio_transcription": self._input_audio_transcription_options(),
                 "turn_detection": {
                     "type": "server_vad",
                     "threshold": 0.5,
@@ -116,6 +114,12 @@ class QwenRealtimeASRProvider(RealtimeASRProvider):
             },
         }
         await self._send_json(session_update)
+
+    def _input_audio_transcription_options(self) -> dict[str, str]:
+        language = self._language.strip().lower()
+        if not language or language == "auto":
+            return {}
+        return {"language": language}
 
     async def send_audio(self, pcm_bytes: bytes) -> None:
         """Send a chunk of PCM16 audio data (base64-encoded)."""

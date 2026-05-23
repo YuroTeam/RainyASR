@@ -9,16 +9,143 @@ Design: Glassmorphism + OLED Dark
 from __future__ import annotations
 
 import sys
+from math import cos, pi, sin
 from typing import override
 
-from PySide6.QtCore import QEvent, QPoint, Qt, Signal
-from PySide6.QtGui import QCloseEvent, QColor, QEnterEvent, QFont, QMouseEvent, QResizeEvent
+from PySide6.QtCore import QEvent, QLineF, QObject, QPoint, QPointF, QRect, Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QCloseEvent,
+    QColor,
+    QCursor,
+    QEnterEvent,
+    QFont,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QPen,
+    QPolygonF,
+    QResizeEvent,
+)
 from PySide6.QtWidgets import QGraphicsDropShadowEffect, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from rainyasr.config import SubtitleConfig
 
 CONTROL_MARGIN = 8
+CONTROL_GAP = 6
 CLOSE_BUTTON_SIZE = 24
+IDLE_SUBTITLE_TEXT = "RainyASR"
+LAYOUT_MARGIN_X = 20
+LAYOUT_MARGIN_Y = 12
+LAYOUT_SPACING = 6
+LABEL_PADDING_X = 14
+LABEL_PADDING_Y = 6
+LABEL_BORDER_WIDTH = 1
+SUBTITLE_WINDOW_MIN_HEIGHT = 120
+
+
+class _OverlayControlButton(QPushButton):
+    """Icon-only control button drawn consistently across platforms."""
+
+    def __init__(self, icon_name: str, parent: QWidget) -> None:
+        super().__init__(parent)
+        self._icon_name = icon_name
+        self.setText("")
+
+    @override
+    def paintEvent(self, event: QPaintEvent) -> None:
+        super().paintEvent(event)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        icon_color = QColor(255, 255, 255, 255 if self.underMouse() or self.isDown() else 224)
+        pen = QPen(icon_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        if self._icon_name == "play":
+            self._paint_play_icon(painter, icon_color)
+        elif self._icon_name == "pause":
+            self._paint_pause_icon(painter)
+        elif self._icon_name == "settings":
+            self._paint_settings_icon(painter)
+        else:
+            self._paint_close_icon(painter)
+        painter.end()
+
+    def set_icon_name(self, icon_name: str) -> None:
+        """Switch the painted icon without replacing the button widget."""
+        if self._icon_name == icon_name:
+            return
+        self._icon_name = icon_name
+        self.update()
+
+    def _paint_play_icon(self, painter: QPainter, icon_color: QColor) -> None:
+        center = QPointF(self.width() / 2, self.height() / 2)
+        painter.setBrush(icon_color)
+        painter.drawPolygon(
+            QPolygonF(
+                (
+                    QPointF(center.x() - 3.8, center.y() - 6.1),
+                    QPointF(center.x() - 3.8, center.y() + 6.1),
+                    QPointF(center.x() + 6.0, center.y()),
+                )
+            )
+        )
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+    def _paint_pause_icon(self, painter: QPainter) -> None:
+        center = QPointF(self.width() / 2, self.height() / 2)
+        painter.drawLine(
+            QLineF(
+                center.x() - 3.6,
+                center.y() - 5.8,
+                center.x() - 3.6,
+                center.y() + 5.8,
+            )
+        )
+        painter.drawLine(
+            QLineF(
+                center.x() + 3.6,
+                center.y() - 5.8,
+                center.x() + 3.6,
+                center.y() + 5.8,
+            )
+        )
+
+    def _paint_close_icon(self, painter: QPainter) -> None:
+        center = QPointF(self.width() / 2, self.height() / 2)
+        radius = 5.7
+        painter.drawLine(
+            QLineF(
+                center.x() - radius,
+                center.y() - radius,
+                center.x() + radius,
+                center.y() + radius,
+            )
+        )
+        painter.drawLine(
+            QLineF(
+                center.x() + radius,
+                center.y() - radius,
+                center.x() - radius,
+                center.y() + radius,
+            )
+        )
+
+    def _paint_settings_icon(self, painter: QPainter) -> None:
+        center = QPointF(self.width() / 2, self.height() / 2)
+        for step in range(8):
+            angle = step * pi / 4
+            painter.drawLine(
+                QLineF(
+                    center.x() + cos(angle) * 6.0,
+                    center.y() + sin(angle) * 6.0,
+                    center.x() + cos(angle) * 7.7,
+                    center.y() + sin(angle) * 7.7,
+                )
+            )
+        painter.drawEllipse(center, 5.0, 5.0)
+        painter.drawEllipse(center, 1.8, 1.8)
 
 
 def configure_macos_overlay_app() -> None:
@@ -48,17 +175,21 @@ class SubtitleWindow(QWidget):
     """
 
     close_requested = Signal()
+    settings_requested = Signal()
+    playback_toggle_requested = Signal()
     closed = Signal()
 
     def __init__(self, config: SubtitleConfig | None = None) -> None:
         super().__init__()
         self._config = config or SubtitleConfig()
         self._drag_pos: QPoint | None = None
-        self._hidden_for_empty_subtitle = False
+        self._playback_active = False
+        self._hover_sync_timer = QTimer(self)
 
         self._setup_window()
         self._setup_labels()
-        self._setup_close_button()
+        self._setup_control_buttons()
+        self._install_hover_event_filters()
         self._apply_style()
 
     # -- Window setup ------------------------------------------------------
@@ -75,12 +206,25 @@ class SubtitleWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
 
-        # Constrain size to reasonable bounds
-        self.setMinimumWidth(200)
-        self.setMaximumWidth(800)
+        self._apply_window_size_constraints()
 
         self.setMouseTracking(True)
         self._apply_platform_overlay_behavior()
+        self._setup_hover_sync_timer()
+
+    def _setup_hover_sync_timer(self) -> None:
+        """Recover hover controls when platform enter/leave events are missed."""
+        self._hover_sync_timer.setInterval(100)
+        self._hover_sync_timer.timeout.connect(self._sync_controls_with_cursor)
+        self._hover_sync_timer.start()
+
+    def _apply_window_size_constraints(self) -> None:
+        """Keep the overlay width stable while allowing vertical growth."""
+        width = self._config.window_width
+        self.setFixedWidth(width)
+        self.setMinimumHeight(SUBTITLE_WINDOW_MIN_HEIGHT)
+        if self.height() < SUBTITLE_WINDOW_MIN_HEIGHT:
+            self.resize(width, SUBTITLE_WINDOW_MIN_HEIGHT)
 
     def _apply_platform_overlay_behavior(self) -> None:
         """Apply platform-specific flags needed for true overlay behavior."""
@@ -113,32 +257,65 @@ class SubtitleWindow(QWidget):
         ns_window.setLevel_(AppKit.NSStatusWindowLevel)
 
     def _setup_labels(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 12, 20, 12)
-        layout.setSpacing(6)
+        self._subtitle_layout = QVBoxLayout(self)
+        self._subtitle_layout.setContentsMargins(
+            LAYOUT_MARGIN_X,
+            LAYOUT_MARGIN_Y,
+            LAYOUT_MARGIN_X,
+            LAYOUT_MARGIN_Y,
+        )
+        self._subtitle_layout.setSpacing(LAYOUT_SPACING)
 
         self._original_label = QLabel(self)
         self._original_label.setObjectName("subtitleOriginalLabel")
         self._original_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._original_label.setWordWrap(True)
-        layout.addWidget(self._original_label)
+        self._subtitle_layout.addWidget(self._original_label)
 
         self._translated_label = QLabel(self)
         self._translated_label.setObjectName("subtitleTranslatedLabel")
         self._translated_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._translated_label.setWordWrap(True)
-        layout.addWidget(self._translated_label)
+        self._subtitle_layout.addWidget(self._translated_label)
+
+        self._idle_label = QLabel(IDLE_SUBTITLE_TEXT, self)
+        self._idle_label.setObjectName("subtitleIdleLabel")
+        self._idle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._idle_label.setWordWrap(True)
+        self._subtitle_layout.addWidget(self._idle_label)
 
         self._original_shadow = QGraphicsDropShadowEffect(self._original_label)
         self._translated_shadow = QGraphicsDropShadowEffect(self._translated_label)
+        self._idle_shadow = QGraphicsDropShadowEffect(self._idle_label)
         self._original_label.setGraphicsEffect(self._original_shadow)
         self._translated_label.setGraphicsEffect(self._translated_shadow)
+        self._idle_label.setGraphicsEffect(self._idle_shadow)
 
         self._update_label_visibility()
+        self._refresh_subtitle_geometry()
 
-    def _setup_close_button(self) -> None:
-        """Small hover-revealed close control for frameless windows."""
-        self._close_button = QPushButton("×", self)
+    def _setup_control_buttons(self) -> None:
+        """Small hover-revealed controls for frameless windows."""
+        self._playback_button = _OverlayControlButton("play", self)
+        self._playback_button.setObjectName("subtitlePlaybackButton")
+        self._playback_button.setFixedSize(CLOSE_BUTTON_SIZE, CLOSE_BUTTON_SIZE)
+        self._playback_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._playback_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._playback_button.clicked.connect(self._request_playback_toggle)
+        self._playback_button.hide()
+        self._sync_playback_button_state()
+
+        self._settings_button = _OverlayControlButton("settings", self)
+        self._settings_button.setObjectName("subtitleSettingsButton")
+        self._settings_button.setAccessibleName("Open settings")
+        self._settings_button.setToolTip("Settings")
+        self._settings_button.setFixedSize(CLOSE_BUTTON_SIZE, CLOSE_BUTTON_SIZE)
+        self._settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._settings_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._settings_button.clicked.connect(self._request_settings)
+        self._settings_button.hide()
+
+        self._close_button = _OverlayControlButton("close", self)
         self._close_button.setObjectName("subtitleCloseButton")
         self._close_button.setAccessibleName("Close subtitle window")
         self._close_button.setToolTip("Close")
@@ -147,7 +324,21 @@ class SubtitleWindow(QWidget):
         self._close_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._close_button.clicked.connect(self._request_close)
         self._close_button.hide()
-        self._position_close_button()
+        self._position_control_buttons()
+
+    def _install_hover_event_filters(self) -> None:
+        """Track hover over the label children as well as the parent widget."""
+        for widget in (
+            self,
+            self._original_label,
+            self._translated_label,
+            self._idle_label,
+            self._playback_button,
+            self._settings_button,
+            self._close_button,
+        ):
+            widget.setMouseTracking(True)
+            widget.installEventFilter(self)
 
     # -- Styling -----------------------------------------------------------
 
@@ -165,9 +356,17 @@ class SubtitleWindow(QWidget):
 
         self._original_label.setFont(font)
         self._translated_label.setFont(font)
+        self._idle_label.setFont(font)
 
         # Colors
-        color = QColor(cfg.text_color).name()
+        text_color = QColor(cfg.text_color)
+        color = text_color.name()
+        idle_color = QColor(text_color)
+        idle_color.setAlpha(184)
+        idle_rgba = (
+            f"rgba({idle_color.red()}, {idle_color.green()}, "
+            f"{idle_color.blue()}, {idle_color.alphaF():.2f})"
+        )
         opacity = cfg.bg_opacity / 100.0
 
         # Glassmorphism: translucent black bg + subtle border
@@ -176,7 +375,8 @@ class SubtitleWindow(QWidget):
 
         style = f"""
             QLabel#subtitleOriginalLabel,
-            QLabel#subtitleTranslatedLabel {{
+            QLabel#subtitleTranslatedLabel,
+            QLabel#subtitleIdleLabel {{
                 color: {color};
                 background-color: {bg_rgba};
                 border: 1px solid {border_rgba};
@@ -184,6 +384,12 @@ class SubtitleWindow(QWidget):
                 padding: 6px 14px;
             }}
 
+            QLabel#subtitleIdleLabel {{
+                color: {idle_rgba};
+            }}
+
+            QPushButton#subtitlePlaybackButton,
+            QPushButton#subtitleSettingsButton,
             QPushButton#subtitleCloseButton {{
                 color: rgba(255, 255, 255, 0.88);
                 background-color: rgba(15, 23, 42, 0.76);
@@ -192,6 +398,36 @@ class SubtitleWindow(QWidget):
                 padding: 0;
                 font-size: 16px;
                 font-weight: 600;
+            }}
+
+            QPushButton#subtitlePlaybackButton[running="true"]:hover {{
+                color: #FFFFFF;
+                background-color: rgba(217, 119, 6, 0.92);
+                border-color: rgba(255, 255, 255, 0.46);
+            }}
+
+            QPushButton#subtitlePlaybackButton[running="true"]:pressed {{
+                background-color: rgba(180, 83, 9, 0.96);
+            }}
+
+            QPushButton#subtitlePlaybackButton[running="false"]:hover {{
+                color: #FFFFFF;
+                background-color: rgba(22, 163, 74, 0.92);
+                border-color: rgba(255, 255, 255, 0.46);
+            }}
+
+            QPushButton#subtitlePlaybackButton[running="false"]:pressed {{
+                background-color: rgba(21, 128, 61, 0.96);
+            }}
+
+            QPushButton#subtitleSettingsButton:hover {{
+                color: #FFFFFF;
+                background-color: rgba(37, 99, 235, 0.92);
+                border-color: rgba(255, 255, 255, 0.46);
+            }}
+
+            QPushButton#subtitleSettingsButton:pressed {{
+                background-color: rgba(30, 64, 175, 0.96);
             }}
 
             QPushButton#subtitleCloseButton:hover {{
@@ -207,7 +443,7 @@ class SubtitleWindow(QWidget):
         self.setStyleSheet(style)
 
         # Text shadow effect for readability on any video/game background
-        for shadow in (self._original_shadow, self._translated_shadow):
+        for shadow in (self._original_shadow, self._translated_shadow, self._idle_shadow):
             shadow.setBlurRadius(8)
             shadow.setColor(QColor(0, 0, 0, 180))
             shadow.setOffset(1, 1)
@@ -228,27 +464,49 @@ class SubtitleWindow(QWidget):
             translated: Target-language text.
             is_partial: Transcript state accepted for API compatibility.
         """
-        self._original_label.setText(original.strip())
-        self._translated_label.setText(translated.strip())
+        original_text = original.strip()
+        translated_text = translated.strip()
+        self._original_label.setText(original_text)
+        if translated_text or not original_text:
+            self._translated_label.setText(translated_text)
         self._update_label_visibility()
 
-        self.adjustSize()
-        self._position_close_button()
-        self._sync_window_visibility()
+        self._refresh_subtitle_geometry()
+        self._position_control_buttons()
 
     def apply_config(self, config: SubtitleConfig) -> None:
         """Re-apply appearance settings from a new config object."""
+        controls_were_visible = (
+            not self._close_button.isHidden()
+            or not self._settings_button.isHidden()
+            or not self._playback_button.isHidden()
+        )
         self._config = config
+        self._apply_window_size_constraints()
         self._apply_style()
         self._update_label_visibility()
-        self.adjustSize()
-        self._position_close_button()
-        self._sync_window_visibility()
+        self._refresh_subtitle_geometry()
+        self._position_control_buttons()
+        if self._has_visible_content():
+            self._set_controls_visible(controls_were_visible or self._mouse_is_inside_window())
+
+    def set_playback_active(self, active: bool) -> None:
+        """Update the play/pause control to reflect whether capture is running."""
+        if self._playback_active == active:
+            return
+        self._playback_active = active
+        self._sync_playback_button_state()
 
     # -- Internal helpers --------------------------------------------------
 
     def _update_label_visibility(self) -> None:
         """Show/hide labels based on bilingual mode and content."""
+        self._idle_label.setVisible(not self._has_visible_subtitle_text())
+        if self._idle_label.isVisible():
+            self._original_label.hide()
+            self._translated_label.hide()
+            return
+
         if self._config.bilingual_mode:
             self._original_label.setHidden(not self._original_label.text())
             self._translated_label.setHidden(not self._translated_label.text())
@@ -262,32 +520,124 @@ class SubtitleWindow(QWidget):
             return bool(self._original_label.text() or self._translated_label.text())
         return bool(self._translated_label.text())
 
-    def _sync_window_visibility(self) -> None:
-        """Hide only empty subtitles, and restore only windows hidden for that reason."""
-        if self._has_visible_subtitle_text():
-            if self._hidden_for_empty_subtitle:
-                self.show()
-            self._hidden_for_empty_subtitle = False
-            return
-
-        if self.isVisible() or self._hidden_for_empty_subtitle:
-            self.hide()
-            self._hidden_for_empty_subtitle = True
-            self._set_controls_visible(False)
-
-    def _position_close_button(self) -> None:
-        """Keep the close control anchored to the top-right corner."""
-        if not hasattr(self, "_close_button"):
-            return
-
-        self._close_button.move(
-            max(CONTROL_MARGIN, self.width() - CLOSE_BUTTON_SIZE - CONTROL_MARGIN),
-            CONTROL_MARGIN,
+    def _has_visible_content(self) -> bool:
+        """Return whether the overlay has a visible subtitle or idle surface."""
+        return any(
+            not label.isHidden()
+            for label in (self._original_label, self._translated_label, self._idle_label)
         )
 
+    def _refresh_subtitle_geometry(self) -> None:
+        """Resize subtitles by wrapped line count while keeping width fixed."""
+        label_width = self._label_width()
+        visible_labels = [
+            label
+            for label in (self._original_label, self._translated_label, self._idle_label)
+            if not label.isHidden()
+        ]
+
+        total_label_height = 0
+        for label in visible_labels:
+            label.setFixedWidth(label_width)
+            label_height = self._label_height_for_text(label, label.text())
+            label.setFixedHeight(label_height)
+            total_label_height += label_height
+
+        spacing = LAYOUT_SPACING * max(0, len(visible_labels) - 1)
+        target_height = max(
+            SUBTITLE_WINDOW_MIN_HEIGHT,
+            LAYOUT_MARGIN_Y * 2 + total_label_height + spacing,
+        )
+        self.setFixedHeight(target_height)
+
+    def _label_width(self) -> int:
+        return max(1, self.width() - LAYOUT_MARGIN_X * 2)
+
+    def _label_height_for_text(self, label: QLabel, text: str) -> int:
+        line_height = label.fontMetrics().lineSpacing()
+        line_count = self._wrapped_line_count(label, text)
+        return line_count * line_height + 2 * (LABEL_PADDING_Y + LABEL_BORDER_WIDTH)
+
+    def _wrapped_line_count(self, label: QLabel, text: str) -> int:
+        text = text.strip() or " "
+        text_width = max(
+            1,
+            self._label_width() - 2 * (LABEL_PADDING_X + LABEL_BORDER_WIDTH),
+        )
+        metrics = label.fontMetrics()
+        flags = Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere
+        bounds = metrics.boundingRect(QRect(0, 0, text_width, 100000), flags, text)
+        return max(1, round(bounds.height() / max(1, metrics.lineSpacing())))
+
+    def _position_control_buttons(self) -> None:
+        """Keep overlay controls anchored to the top-right corner."""
+        if (
+            not hasattr(self, "_close_button")
+            or not hasattr(self, "_settings_button")
+            or not hasattr(self, "_playback_button")
+        ):
+            return
+
+        close_x = max(CONTROL_MARGIN, self.width() - CLOSE_BUTTON_SIZE - CONTROL_MARGIN)
+        settings_x = max(CONTROL_MARGIN, close_x - CLOSE_BUTTON_SIZE - CONTROL_GAP)
+        playback_x = max(CONTROL_MARGIN, settings_x - CLOSE_BUTTON_SIZE - CONTROL_GAP)
+        self._playback_button.move(playback_x, CONTROL_MARGIN)
+        self._settings_button.move(settings_x, CONTROL_MARGIN)
+        self._close_button.move(close_x, CONTROL_MARGIN)
+        self._raise_control_buttons()
+
     def _set_controls_visible(self, visible: bool) -> None:
-        """Show overlay controls only when useful and non-empty."""
-        self._close_button.setVisible(visible and self._has_visible_subtitle_text())
+        """Show overlay controls when the window has a visible hover target."""
+        should_show = visible and self._has_visible_content()
+        self._playback_button.setVisible(should_show)
+        self._settings_button.setVisible(should_show)
+        self._close_button.setVisible(should_show)
+        if should_show:
+            self._raise_control_buttons()
+
+    def _raise_control_buttons(self) -> None:
+        self._playback_button.raise_()
+        self._settings_button.raise_()
+        self._close_button.raise_()
+
+    def _hide_controls_if_mouse_left(self) -> None:
+        if self._mouse_is_inside_window():
+            return
+        self._set_controls_visible(False)
+
+    def _sync_controls_with_cursor(self) -> None:
+        if (
+            not hasattr(self, "_close_button")
+            or not hasattr(self, "_settings_button")
+            or not hasattr(self, "_playback_button")
+        ):
+            return
+        if not self.isVisible():
+            self._set_controls_visible(False)
+            return
+        self._set_controls_visible(self._mouse_is_inside_window())
+
+    def _sync_playback_button_state(self) -> None:
+        icon_name = "pause" if self._playback_active else "play"
+        tooltip = "Pause transcription" if self._playback_active else "Start transcription"
+        self._playback_button.set_icon_name(icon_name)
+        self._playback_button.setAccessibleName(tooltip)
+        self._playback_button.setToolTip(tooltip)
+        self._playback_button.setProperty("running", self._playback_active)
+        self._playback_button.style().unpolish(self._playback_button)
+        self._playback_button.style().polish(self._playback_button)
+        self._playback_button.update()
+
+    def _mouse_is_inside_window(self) -> bool:
+        return self.rect().contains(self.mapFromGlobal(QCursor.pos()))
+
+    def _request_playback_toggle(self) -> None:
+        """Ask the application shell to start or pause transcription."""
+        self.playback_toggle_requested.emit()
+
+    def _request_settings(self) -> None:
+        """Ask the application shell to open settings."""
+        self.settings_requested.emit()
 
     def _request_close(self) -> None:
         """Emit a close request before closing this borderless window."""
@@ -303,8 +653,16 @@ class SubtitleWindow(QWidget):
         super().closeEvent(event)
 
     @override
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.Enter:
+            self._set_controls_visible(True)
+        elif event.type() == QEvent.Type.Leave:
+            QTimer.singleShot(0, self._hide_controls_if_mouse_left)
+        return super().eventFilter(watched, event)
+
+    @override
     def resizeEvent(self, event: QResizeEvent) -> None:
-        self._position_close_button()
+        self._position_control_buttons()
         super().resizeEvent(event)
 
     @override
@@ -314,7 +672,7 @@ class SubtitleWindow(QWidget):
 
     @override
     def leaveEvent(self, event: QEvent) -> None:
-        self._set_controls_visible(False)
+        QTimer.singleShot(0, self._hide_controls_if_mouse_left)
         super().leaveEvent(event)
 
     @override

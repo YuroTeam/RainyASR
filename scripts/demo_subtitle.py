@@ -94,7 +94,7 @@ def main() -> None:
     print("Features to check:")
     print("  - Window stays on top of other apps")
     print("  - Drag window by clicking and dragging")
-    print("  - Hover over any window to reveal the close button")
+    print("  - Hover over any window to reveal settings and close buttons")
     print("  - Window 2: monolingual mode, only translation shown")
     print("  - Window 3: larger font, amber text")
 

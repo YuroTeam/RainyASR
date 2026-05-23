@@ -1,27 +1,30 @@
 # RainyASR
 
-基于 Python & Qt 的跨平台实时字幕翻译工具。通过录制系统音频流，利用 ASR 进行语音识别、LLM 进行翻译，最终以无边框悬浮窗展示双语字幕。
+[English README](README.en.md)
+
+RainyASR 是一个基于 Python 和 Qt 的跨平台实时字幕翻译工具。它捕获系统播放音频，使用 DashScope Qwen 实时 ASR 识别语音，再通过 Qwen-MT/OpenAI 兼容接口翻译，并在无边框置顶悬浮窗中显示双语字幕。
 
 ## 功能特性
 
-- 跨平台系统音频捕获（Windows / macOS / Linux）
-- 实时语音识别（DashScope / Qwen ASR）
-- 智能翻译（DeepSeek / OpenAI 兼容接口）
-- 无边框置顶悬浮字幕窗口
-- 全局快捷键显示/隐藏字幕
-- 可自定义字幕样式（字体、颜色、透明度）
-- 滑动窗口音频切片，平衡延迟与句子完整性
+- 跨平台系统音频捕获：Windows WASAPI loopback、macOS BlackHole、Linux PulseAudio/PipeWire monitor
+- DashScope Qwen 实时语音识别
+- Qwen-MT/OpenAI 兼容翻译接口，默认 `qwen-mt-flash`
+- 无边框、置顶、可拖拽字幕悬浮窗；鼠标悬停时显示播放/暂停、设置齿轮和关闭按钮
+- 双语/单语字幕显示，支持字体、字号、窗口宽度、颜色、背景透明度配置
+- Settings 对字幕外观支持热加载；音频、ASR、翻译目标、API Key 和快捷键变更会自动重启受影响组件
+- 全局快捷键显示/隐藏字幕，默认 `ctrl+shift+r`
+- 系统托盘菜单：显示/隐藏字幕、设置、退出
+- 静音门控和本地预滚音频，减少无声段请求并保留开头语音
 
-## 开发环境
+## 环境要求
 
-- **Python**: >= 3.13
-- **包管理器**: [uv](https://docs.astral.sh/uv/)
-- **GUI 框架**: PySide6
-- **音频处理**: sounddevice / soundfile
-- **代码风格**: ruff
-- **提交检查**: pre-commit
+- Python `>=3.13`
+- [uv](https://docs.astral.sh/uv/)
+- PySide6
+- PortAudio 兼容音频环境
+- DashScope API Key。使用非 Qwen 翻译后端时，还需要对应翻译 API Key
 
-## 前置准备
+## 快速开始
 
 ### 1. 安装 uv
 
@@ -29,157 +32,179 @@
 # macOS / Linux
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Windows
+# Windows PowerShell
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-安装完成后，确保 `uv` 在 PATH 中：
+确认安装成功：
 
 ```bash
 uv --version
 ```
 
-### 2. 克隆项目并同步依赖
+### 2. 同步依赖
 
 ```bash
 git clone <repository-url>
 cd RainyASR
-
-# 创建虚拟环境并安装所有依赖
 uv sync
 ```
 
-`uv sync` 会根据 `pyproject.toml` 和 `uv.lock` 自动创建虚拟环境并安装精确版本的依赖。
+### 3. 配置 API Key
 
-### 3. 安装 pre-commit hooks
+在项目根目录创建 `.env`：
+
+```bash
+DASHSCOPE_API_KEY=your_dashscope_api_key
+
+# 可选
+TRANSLATE_MODEL=qwen-mt-flash
+TRANSLATE_BASE_URL=
+TRANSLATE_API_KEY=
+
+# 使用 DeepSeek 作为备用翻译后端时再设置
+DEEPSEEK_API_KEY=your_deepseek_api_key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+LOGFIRE_TOKEN=
+```
+
+也可以启动后通过托盘菜单打开 Settings 填写 API Key。点击 Save 后会写入项目根目录 `.env`，后续启动会自动读取。
+
+### 4. 准备系统音频捕获
+
+- macOS：安装 BlackHole，并创建多输出设备。
+- Windows：通常无需额外驱动，使用系统 WASAPI loopback。
+- Linux：需要 PulseAudio/PipeWire monitor source，并确保 PortAudio 可用。
+
+具体步骤见下方“平台注意事项”。
+
+### 5. 启动方式
+
+```bash
+# 推荐：使用 pyproject.toml 中注册的命令行入口
+uv run rainyasr
+
+# 等价：使用 Python 模块入口
+uv run python -m rainyasr
+```
+
+不建议直接运行 `src/rainyasr/main.py`。主程序依赖包入口和项目根目录环境，使用上面两个入口可以确保 import 路径、`.env` 加载和依赖环境一致。
+
+启动后会依次执行：
+
+1. 配置 Logfire。本地默认可运行；只有设置了 `LOGFIRE_TOKEN` 才上传 telemetry。
+2. 加载 `config/config.toml`。
+3. 从环境变量或 `.env` 读取 API Key；如果缺少 API Key，会自动打开 Settings。
+4. 检测系统 loopback 音频设备。
+5. 启动字幕窗口、worker、全局快捷键和系统托盘菜单。
+
+运行时操作：
+
+- 使用默认快捷键 `ctrl+shift+r` 显示/隐藏字幕。
+- 鼠标悬停在字幕窗口上方会显示右上角控制按钮：播放/暂停按钮停止或恢复 worker，用于手动控制请求成本；齿轮打开 Settings，叉号关闭程序。
+- 通过系统托盘菜单打开 Settings、显示/隐藏字幕或退出。
+- 在 Settings 中修改字幕样式会立即应用；修改音频、ASR、翻译目标、API Key 或快捷键后，运行中的组件会自动重启。若当前已暂停，这些设置会应用但不会自动恢复 worker。
+- 从托盘退出、关闭字幕窗口、终端 `Ctrl+C` 或 `SIGTERM` 都会触发优雅退出。
+- 退出时会停止 worker、注销热键并保存 `config/config.toml`。
+
+常见启动提示：
+
+- Settings 自动打开：默认 Qwen-MT 模式下通常说明缺少 `DASHSCOPE_API_KEY`。使用非 Qwen 翻译后端时，还需要 `TRANSLATE_API_KEY` 或 `DEEPSEEK_API_KEY`。
+- `API keys required`：说明 Settings 或 `.env` 中仍未填写当前 ASR/翻译后端需要的 API Key。
+- `Audio loopback device not found`：按下方平台说明配置系统音频捕获。Linux 上请确认存在 monitor source；macOS 上请确认 BlackHole 已安装并作为输出链路的一部分。
+- macOS Accessibility 权限提示：到 System Settings > Privacy & Security > Accessibility 授权当前终端或打包后的应用。
+
+## 配置
+
+用户偏好保存在项目内 `config/config.toml`：
+
+```toml
+[audio]
+sample_rate = 16000
+channels = 1
+frame_ms = 100
+audio_queue_max_frames = 100
+silence_rms_threshold = 0.0003
+
+[asr]
+asr_model = "qwen3-asr-flash-realtime"
+asr_format = "pcm"
+asr_language = "auto"
+
+[subtitle]
+font_family = "PingFang SC, Microsoft YaHei, sans-serif"
+font_size = 24
+window_width = 1000
+text_color = "#FFFFFF"
+bg_opacity = 80
+bilingual_mode = true
+
+[hotkey]
+toggle_hotkey = "ctrl+shift+r"
+
+[language]
+target_lang = "zh"
+```
+
+`hotkey.toggle_hotkey` 使用 `+` 连接按键，必须包含至少一个修饰键。支持的修饰键包括 `ctrl`、`alt`、`shift`、`cmd`；普通键支持字母、数字、`f1`-`f20`，以及 `space`、`enter`、`esc`、方向键、`home/end`、`pageup/pagedown`、`insert`、`delete`、`printscreen`、`pause`、`capslock` 等常用功能键。
+
+敏感配置从环境变量或 `.env` 读取，不会写入 `config/config.toml`。在 Settings 中保存 API Key 时，会同步更新项目根目录 `.env`：
+
+| 环境变量 | 说明 |
+|---|---|
+| `DASHSCOPE_API_KEY` | DashScope API Key，用于实时 ASR；默认也用于 Qwen-MT 翻译 |
+| `DASHSCOPE_COMPATIBLE_BASE_URL` | DashScope OpenAI 兼容 API Base URL，可选 |
+| `TRANSLATE_MODEL` | 翻译模型覆盖值，默认 `qwen-mt-flash` |
+| `TRANSLATE_BASE_URL` | 通用 OpenAI 兼容翻译 API Base URL 覆盖值，可选 |
+| `TRANSLATE_API_KEY` | 通用翻译 API Key 覆盖值，可选 |
+| `DEEPSEEK_API_KEY` | DeepSeek API Key，仅使用 DeepSeek 翻译后端时需要 |
+| `DEEPSEEK_BASE_URL` | DeepSeek/OpenAI 兼容 API Base URL，可选 |
+| `LOGFIRE_TOKEN` | 存在时上传 Logfire telemetry，可选 |
+
+`audio.silence_rms_threshold` 控制本地静音门控。Logfire 中若持续看到 `Dropping local silence before ASR session starts`，并且记录的 `rms` 低于该阈值，说明 RainyASR 认为当前系统音频太低而没有打开 ASR session。macOS BlackHole 的实际 RMS 可能很低，可在 Settings > Audio 调低该值，例如 `0.0003` 或更低；也可以用 `scripts/test_capture.py` 观察实际 `raw_rms`。
+
+## 开发工作流
+
+安装 pre-commit hooks：
 
 ```bash
 uv run pre-commit install
 ```
 
-这会在 `.git/hooks/` 中安装 pre-commit 钩子，确保每次提交前自动运行代码检查。
-
-## 开发工作流
-
-### 运行代码检查
+代码检查和格式化：
 
 ```bash
-# 检查代码风格问题
-uv run ruff check src/
-
-# 自动修复可修复的问题
-uv run ruff check --fix src/
-
-# 格式化代码
-uv run ruff format src/
+uv run ruff check src/ tests/ scripts/
+uv run ruff format src/ tests/ scripts/
 ```
 
-### 运行测试
+运行测试：
 
 ```bash
-# 运行所有测试
-uv run pytest
-
-# 运行特定模块测试
-uv run pytest tests/test_subtitle_window.py -v
-uv run pytest tests/test_translate_provider.py -v
-
-# 带覆盖率报告
-uv run pytest --cov=src/rainyasr --cov-report=term-missing
+uv run pytest -q
 ```
 
-### 手动运行 pre-commit（可选）
+常用局部测试：
 
 ```bash
-# 对所有文件运行检查
-uv run pre-commit run --all-files
-
-# 对暂存文件运行检查
-uv run pre-commit run
-```
-
-### 运行项目
-
-```bash
-# 开发模式运行
-uv run python -m rainyasr
-
-# 或直接运行入口文件
-uv run python src/rainyasr/main.py
-```
-
-## 配置说明
-
-首次启动时会自动创建配置文件，路径：
-
-- **macOS**: `~/.config/RainyASR/config.json`
-- **Windows**: `%APPDATA%/RainyASR/config.json`
-- **Linux**: `~/.config/RainyASR/config.json`
-
-需要配置的项：
-
-| 配置项 | 说明 |
-|--------|------|
-| `dashscope_api_key` | DashScope API Key（用于语音识别） |
-| `deepseek_api_key` | DeepSeek API Key（用于翻译） |
-| `asr_model` | ASR 模型，默认 `qwen3-asr-flash-filetrans` |
-| `translate_model` | 翻译模型，默认 `deepseek-chat` |
-
-## 项目结构
-
-```
-.
-├── src/rainyasr/          # 主源码
-│   ├── audio/             # 音频捕获与处理
-│   ├── providers/         # ASR / 翻译 Provider
-│   ├── gui/               # Qt 界面
-│   ├── config.py          # 配置管理
-│   ├── worker.py          # 后台录音 + API 调度
-│   ├── app.py             # 应用入口
-│   └── main.py            # 程序入口
-├── .claude/plans/         # 设计文档与计划
-├── pyproject.toml         # 项目配置与依赖
-├── uv.lock               # 依赖锁定文件
-└── README.md
+uv run pytest tests/test_main.py -q
+uv run pytest tests/test_worker.py -q
+uv run pytest tests/test_hotkey.py -q
+uv run pytest tests/test_subtitle_window.py -q
 ```
 
 ## 手动验证脚本
 
-项目提供了一系列手动验证脚本，用于独立测试各模块：
-
 | 脚本 | 功能 | 运行方式 |
 |---|---|---|
-| `scripts/test_capture.py` | 音频设备检测 + 10 秒录音测试 | `uv run python scripts/test_capture.py` |
+| `scripts/test_capture.py` | 检测 loopback 设备并录制 10 秒系统音频 | `uv run python scripts/test_capture.py` |
 | `scripts/test_asr.py` | 发送测试音频到 DashScope 实时 ASR | `DASHSCOPE_API_KEY=xxx uv run python scripts/test_asr.py` |
 | `scripts/test_translate.py` | 翻译 Provider 交互测试 | `uv run python scripts/test_translate.py` |
+| `scripts/test_worker.py` | Worker 端到端链路测试 | `uv run python scripts/test_worker.py` |
 | `scripts/demo_subtitle.py` | 悬浮字幕窗口视觉预览 | `uv run python scripts/demo_subtitle.py` |
-| `scripts/verify_subtitle_window.py` | 三端字幕窗口生命周期与窗口行为验证 | `uv run python scripts/verify_subtitle_window.py` |
+| `scripts/verify_subtitle_window.py` | 字幕窗口生命周期与窗口行为验证 | `uv run python scripts/verify_subtitle_window.py` |
 
-### 字幕窗口视觉验证
-
-```bash
-uv run python scripts/demo_subtitle.py
-```
-
-启动后会弹出 3 个悬浮字幕窗口，可验证：
-- 窗口始终置顶（切换到其他应用仍可见）
-- 鼠标拖拽移动窗口位置
-- 鼠标移入窗口后显示关闭按钮，关闭当前字幕窗口
-- 所有字幕窗口都关闭后，demo 进程退出
-- 双语 / 单语模式切换
-- 不同字体大小和配色效果
-
-### 字幕窗口三端验证
-
-`SubtitleWindow` 的关闭按钮、`close_requested` / `closed` 生命周期信号、空字幕自动隐藏等逻辑是跨平台通用实现；Windows / Linux / macOS 都走同一套 Qt 代码。macOS 额外调用 AppKit 设置全屏 Spaces 覆盖行为；Windows 和 Linux 目前依赖 Qt 的 `FramelessWindowHint`, `WindowStaysOnTopHint`, `WindowDoesNotAcceptFocus`, `Tool` 等窗口标志。Linux 不同桌面环境 / Wayland compositor 对置顶窗口的策略可能不同，所以必须在目标桌面上做一次人工验证。
-
-自动测试（三端都运行）：
-
-```bash
-uv run pytest tests/test_subtitle_window.py tests/test_demo_subtitle.py -q
-```
-
-自动 smoke 验证（三端都运行）：会创建 3 个字幕窗口，自动关闭第一个并确认另外两个仍然存在，最后关闭全部窗口并退出。
+字幕窗口 smoke 验证：
 
 ```bash
 # macOS / Linux
@@ -189,7 +214,7 @@ uv run python scripts/verify_subtitle_window.py --smoke
 uv run python .\scripts\verify_subtitle_window.py --smoke
 ```
 
-人工视觉验证（三端都运行）：用于确认置顶、拖拽、hover 关闭按钮、关闭单个窗口不退出进程等窗口管理器行为。
+人工视觉验证：
 
 ```bash
 # macOS / Linux
@@ -199,52 +224,52 @@ uv run python scripts/verify_subtitle_window.py
 uv run python .\scripts\verify_subtitle_window.py
 ```
 
-人工检查项：
-- 关闭任意一个字幕窗口时，只关闭当前窗口，其他字幕窗口继续显示。
-- 关闭所有字幕窗口后，验证脚本进程退出。
-- 拖拽窗口位置正常，窗口无系统边框。
+检查项：
+
+- 窗口无系统边框，能拖拽移动。
 - 切换到普通应用窗口后，字幕仍保持在普通窗口之上。
-- Linux 需要分别在实际目标环境验证，例如 GNOME/X11、GNOME/Wayland、KDE/Wayland；如遇到置顶失效，需要记录桌面环境和显示协议。
+- 鼠标移入窗口后显示播放/暂停、设置齿轮和关闭按钮；齿轮打开 Settings，叉号关闭当前程序。
+- 在 Settings 中调整字幕字号、颜色、宽度、背景透明度或双语模式后，悬浮窗即时更新，且悬停控制按钮仍可见。
+- 关闭任意一个 demo 字幕窗口时，只关闭当前窗口。
+- Linux 需要在目标桌面环境实际验证置顶行为，例如 GNOME/X11、GNOME/Wayland、KDE/Wayland。
 
 ## 平台注意事项
 
 ### macOS
 
-系统音频捕获需要安装虚拟音频驱动，例如 [BlackHole](https://github.com/ExistentialAudio/BlackHole)。
+系统音频捕获需要安装虚拟音频驱动，例如 [BlackHole](https://github.com/ExistentialAudio/BlackHole)：
 
 ```bash
 brew install blackhole-2ch
 ```
 
-> **注意**：通过 Homebrew 安装 BlackHole 后，**必须重启系统**才能使驱动生效。
+通过 Homebrew 安装 BlackHole 后，通常需要重启系统让驱动生效。
 
-#### 配置混合输出（推荐）
+为了同时听到声音并让 RainyASR 捕获系统音频，建议创建多输出设备：
 
-为了同时从 Mac 扬声器听到声音并捕获音频流到 RainyASR，需要创建一个**多输出设备（Multi-Output Device）**：
+1. 打开“音频 MIDI 设置”。
+2. 点击左下角 `+`，选择“创建多输出设备”。
+3. 勾选 `BlackHole 2ch` 和当前扬声器/耳机。
+4. 为 BlackHole 勾选“漂移矫正”。
+5. 将新建的多输出设备设为系统声音输出。
 
-1. 打开**音频 MIDI 设置**（在"启动台"搜索 "Audio MIDI Setup" 或 "音频 MIDI 设置"）
-2. 点击左下角 **+** 按钮，选择**创建多输出设备**
-3. 在右侧勾选以下两个设备：
-   - **BlackHole 2ch**（用于音频捕获）
-   - **MacBook Pro 扬声器**（或你实际使用的输出设备，用于监听）
-4. 勾选 **BlackHole 2ch 的漂移矫正**
-5. 右键点击刚创建的**多输出设备**，选择**将此设备用于声音输出**
-
-这样配置后，系统声音会同时输出到 BlackHole（供 RainyASR 捕获）和你的扬声器（供你收听），无需在系统设置中来回切换默认输出设备。
+全局快捷键在 macOS 上需要 Accessibility 权限。若启动时提示权限不足，请在 System Settings > Privacy & Security > Accessibility 中授权当前终端或打包后的应用。
 
 ### Windows
 
-使用 WASAPI loopback 捕获系统音频，**无需额外安装驱动**。
+RainyASR 使用 Windows 内置 WASAPI loopback 捕获系统音频，通常不需要额外驱动。只要系统默认输出设备正常播放声音，程序会尝试自动找到对应 loopback 设备。
 
-WASAPI（Windows Audio Session API）loopback 是 Windows 内置功能，RainyASR 会自动检测系统中的 Loopback 输入设备并捕获。只要系统音频正常输出，即可直接使用，无需配置虚拟音频设备。
+如果检测失败：
 
-如果检测不到 Loopback 设备，请检查系统是否使用 WASAPI 作为默认音频后端（绝大多数 Windows 系统默认即是）。
+- 确认系统正在通过默认输出设备播放音频。
+- 确认输出设备未被禁用。
+- 尝试重启应用或切换一次默认输出设备。
 
 ### Linux
 
-#### 1. 安装 PortAudio 开发库
+Linux 需要 PortAudio 和 PulseAudio/PipeWire monitor source。
 
-`sounddevice` 依赖 PortAudio，编译时需要系统头文件：
+安装 PortAudio：
 
 ```bash
 # Debian / Ubuntu
@@ -257,28 +282,58 @@ sudo dnf install portaudio-devel
 sudo pacman -S portaudio
 ```
 
-#### 2. 音频捕获方式
-
-RainyASR 在 Linux 上按以下优先级检测音频源：
-
-1. **PulseAudio / PipeWire Monitor**（推荐）：设备名通常包含 "Monitor"，可直接捕获系统音频且不影响正常播放
-2. **默认输入设备**（Fallback）：未找到 Monitor 时，使用系统默认输入设备
-
-大多数现代发行版（Ubuntu 22.04+、Fedora、Arch 等）默认使用 PipeWire 或 PulseAudio，播放音频时会自动创建 Monitor 设备，无需手动配置。
-
-#### 3. 同时输出到扬声器和录制（可选）
-
-如果你的系统没有自动创建 Monitor 设备，可以通过 `pavucontrol` 手动将应用音频同时路由到 Monitor：
+确认存在 monitor source：
 
 ```bash
-# 安装 PulseAudio 音量控制
-sudo apt-get install pavucontrol   # Debian / Ubuntu
-sudo dnf install pavucontrol       # Fedora
+pactl get-default-sink
+pactl list short sources | grep monitor
 ```
 
-打开 **pavucontrol** → **播放** 标签页 → 选择目标应用 → 将其输出设备改为 **"Monitor of XXX"**。
+RainyASR 会优先使用默认 sink 的 `.monitor` source，并通过 `PULSE_SOURCE` 指向它。如果 PortAudio/sounddevice 没有暴露可用的 `pulse` 输入设备，则会继续查找名称中包含 `monitor` 的输入设备。程序不会回退到麦克风，因为这会捕获错误音频源。
 
-> **注意**：Linux 的 Monitor 设备本质就是系统音频的镜像，通常无需像 macOS 那样手动创建"混合输出"。如果程序启动后提示找不到 Monitor，确保有音频正在播放（如播放视频或音乐），此时 PipeWire/PulseAudio 才会创建对应的 Monitor 源。
+如需手动检查或切换录音源，可以安装 `pavucontrol`：
+
+```bash
+# Debian / Ubuntu
+sudo apt-get install pavucontrol
+
+# Fedora
+sudo dnf install pavucontrol
+```
+
+启动 RainyASR 或 `scripts/test_capture.py` 后，打开 `pavucontrol` 的 Recording 标签页，将对应录音流切到 `Monitor of ...` source。
+
+Wayland 桌面环境对置顶窗口和全局快捷键的策略差异较大。若全局快捷键不可用，优先使用托盘菜单显示/隐藏字幕，并记录桌面环境、显示协议和窗口管理器。
+
+## 项目结构
+
+```text
+.
+├── config/
+│   └── config.toml
+├── scripts/
+│   ├── test_capture.py
+│   ├── test_asr.py
+│   ├── test_translate.py
+│   ├── test_worker.py
+│   ├── demo_subtitle.py
+│   └── verify_subtitle_window.py
+├── src/rainyasr/
+│   ├── audio/
+│   ├── gui/
+│   ├── providers/
+│   ├── app.py
+│   ├── config.py
+│   ├── hotkey.py
+│   ├── main.py
+│   └── worker.py
+├── tests/
+├── plan.md
+├── pyproject.toml
+├── uv.lock
+├── README.en.md
+└── README.md
+```
 
 ## License
 

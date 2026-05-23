@@ -1,7 +1,7 @@
-"""Manual validation script for DeepSeekTranslationProvider.
+"""Manual validation script for OpenAICompatibleTranslationProvider.
 
 Usage:
-    DEEPSEEK_API_KEY=xxx uv run python scripts/test_translate.py
+    DASHSCOPE_API_KEY=xxx uv run python scripts/test_translate.py
 
 The script reads English sentences from stdin and prints Chinese translations.
 Type "quit" to exit.
@@ -13,19 +13,34 @@ import asyncio
 import sys
 
 from rainyasr.config import EnvConfig
-from rainyasr.providers import DeepSeekTranslationProvider
+from rainyasr.providers import OpenAICompatibleTranslationProvider
 
 
 async def main() -> None:
-    api_key = EnvConfig.deepseek_api_key()
+    model = EnvConfig.translate_model()
+    api_key = EnvConfig.translate_api_key()
+    if not api_key and OpenAICompatibleTranslationProvider.is_qwen_model(model):
+        api_key = EnvConfig.dashscope_api_key()
     if not api_key:
-        print("Error: DEEPSEEK_API_KEY not set.", file=sys.stderr)
+        api_key = EnvConfig.deepseek_api_key()
+    if not api_key:
+        print("Error: translation API key not set.", file=sys.stderr)
         sys.exit(1)
 
-    provider = DeepSeekTranslationProvider(api_key=api_key)
+    base_url = EnvConfig.translate_base_url()
+    if not base_url and OpenAICompatibleTranslationProvider.is_qwen_model(model):
+        base_url = EnvConfig.dashscope_compatible_base_url()
+    if not base_url:
+        base_url = EnvConfig.deepseek_base_url()
+
+    provider = OpenAICompatibleTranslationProvider(
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+    )
     history: list[str] = []
 
-    print("DeepSeek Translation Test")
+    print(f"Translation Test ({model})")
     print("Enter English sentences (type 'quit' to exit):")
     print("-" * 40)
 

@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Literal
 
 import tomli_w
-from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from dotenv import load_dotenv, set_key
+from pydantic import BaseModel, Field, field_validator
 
 _dotenv_loaded = False
 
@@ -22,8 +22,13 @@ def load_env_file() -> None:
     """Load .env once, when environment-backed config is first accessed."""
     global _dotenv_loaded
     if not _dotenv_loaded:
-        load_dotenv()
+        load_dotenv(_env_file_path())
         _dotenv_loaded = True
+
+
+def _env_file_path() -> Path:
+    """Return the path to the project .env file."""
+    return Path(__file__).parent.parent.parent / ".env"
 
 
 def _config_toml_path() -> Path:
@@ -38,6 +43,7 @@ class AudioConfig(BaseModel):
     channels: int = Field(default=1, ge=1, le=2)
     frame_ms: int = Field(default=100, ge=20, le=500)
     audio_queue_max_frames: int = Field(default=100, ge=10, le=1000)
+    silence_rms_threshold: float = Field(default=0.0003, ge=0.0, le=1.0)
 
 
 class ASRConfig(BaseModel):
@@ -53,6 +59,7 @@ class SubtitleConfig(BaseModel):
 
     font_family: str = Field(default="PingFang SC, Microsoft YaHei, sans-serif")
     font_size: int = Field(default=24, ge=8, le=72)
+    window_width: int = Field(default=1000, ge=400, le=1800)
     text_color: str = Field(default="#FFFFFF")
     bg_opacity: int = Field(default=80, ge=0, le=100)
     bilingual_mode: bool = Field(default=True)
@@ -61,7 +68,23 @@ class SubtitleConfig(BaseModel):
 class HotkeyConfig(BaseModel):
     """Global hotkey settings."""
 
-    toggle_hotkey: str = Field(default="ctrl+shift+r")
+    toggle_hotkey: str = Field(default="ctrl+shift+r", pattern=r"^[a-z0-9+]+$")
+
+    @field_validator("toggle_hotkey", mode="before")
+    @classmethod
+    def normalize_toggle_hotkey(cls, value: object) -> object:
+        """Normalize user-entered hotkeys while preserving separator semantics."""
+        if not isinstance(value, str):
+            return value
+        return "+".join(part.strip().lower() for part in value.strip().split("+"))
+
+    @field_validator("toggle_hotkey")
+    @classmethod
+    def validate_toggle_hotkey_parts(cls, value: str) -> str:
+        """Reject empty segments such as ctrl++r."""
+        if any(not part for part in value.split("+")):
+            raise ValueError("Hotkey segments cannot be empty.")
+        return value
 
 
 class LanguageConfig(BaseModel):
@@ -83,10 +106,12 @@ class AppConfig(BaseModel):
         """Persist config to project config.toml."""
         path = _config_toml_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            _dump_toml(self.model_dump(mode="json")),
-            encoding="utf-8",
-        )
+        serialized = _dump_toml(self.model_dump(mode="json"))
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(serialized)
+        if os.name != "nt":
+            path.chmod(0o600)
 
     @classmethod
     def load(cls) -> AppConfig:
@@ -109,6 +134,19 @@ def _dump_toml(data: dict) -> str:
     return buf.getvalue().decode("utf-8")
 
 
+def save_env_api_keys(*, dashscope_api_key: str, deepseek_api_key: str) -> None:
+    """Persist API keys to the project .env file and current process env."""
+    path = _env_file_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    set_key(path, "DASHSCOPE_API_KEY", dashscope_api_key)
+    set_key(path, "DEEPSEEK_API_KEY", deepseek_api_key)
+    if os.name != "nt":
+        path.chmod(0o600)
+
+    os.environ["DASHSCOPE_API_KEY"] = dashscope_api_key
+    os.environ["DEEPSEEK_API_KEY"] = deepseek_api_key
+
+
 class EnvConfig:
     """Sensitive configuration loaded from environment / .env file."""
 
@@ -128,9 +166,27 @@ class EnvConfig:
         return os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/api/v1")
 
     @staticmethod
+    def dashscope_compatible_base_url() -> str:
+        load_env_file()
+        return os.getenv(
+            "DASHSCOPE_COMPATIBLE_BASE_URL",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        )
+
+    @staticmethod
     def deepseek_base_url() -> str:
         load_env_file()
         return os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+
+    @staticmethod
+    def translate_api_key() -> str:
+        load_env_file()
+        return os.getenv("TRANSLATE_API_KEY", "")
+
+    @staticmethod
+    def translate_base_url() -> str:
+        load_env_file()
+        return os.getenv("TRANSLATE_BASE_URL", "")
 
     @staticmethod
     def asr_model() -> str:
@@ -140,7 +196,7 @@ class EnvConfig:
     @staticmethod
     def translate_model() -> str:
         load_env_file()
-        return os.getenv("TRANSLATE_MODEL", "deepseek-chat")
+        return os.getenv("TRANSLATE_MODEL", "qwen-mt-flash")
 
     @staticmethod
     def logfire_token() -> str | None:
