@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from rainyasr.gui.settings_dialog import SettingsDialog
 from rainyasr.gui.subtitle_window import SubtitleWindow
 
-__all__ = ["SubtitleWindow"]
+__all__ = ["SettingsDialog", "SubtitleWindow"]

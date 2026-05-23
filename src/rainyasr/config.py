@@ -13,7 +13,7 @@ from typing import Literal
 
 import tomli_w
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 _dotenv_loaded = False
 
@@ -61,7 +61,23 @@ class SubtitleConfig(BaseModel):
 class HotkeyConfig(BaseModel):
     """Global hotkey settings."""
 
-    toggle_hotkey: str = Field(default="ctrl+shift+r")
+    toggle_hotkey: str = Field(default="ctrl+shift+r", pattern=r"^[a-z0-9+]+$")
+
+    @field_validator("toggle_hotkey", mode="before")
+    @classmethod
+    def normalize_toggle_hotkey(cls, value: object) -> object:
+        """Normalize user-entered hotkeys while preserving separator semantics."""
+        if not isinstance(value, str):
+            return value
+        return "+".join(part.strip().lower() for part in value.strip().split("+"))
+
+    @field_validator("toggle_hotkey")
+    @classmethod
+    def validate_toggle_hotkey_parts(cls, value: str) -> str:
+        """Reject empty segments such as ctrl++r."""
+        if any(not part for part in value.split("+")):
+            raise ValueError("Hotkey segments cannot be empty.")
+        return value
 
 
 class LanguageConfig(BaseModel):
@@ -83,10 +99,12 @@ class AppConfig(BaseModel):
         """Persist config to project config.toml."""
         path = _config_toml_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            _dump_toml(self.model_dump(mode="json")),
-            encoding="utf-8",
-        )
+        serialized = _dump_toml(self.model_dump(mode="json"))
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(serialized)
+        if os.name != "nt":
+            path.chmod(0o600)
 
     @classmethod
     def load(cls) -> AppConfig:
