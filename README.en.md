@@ -126,6 +126,7 @@ sample_rate = 16000
 channels = 1
 frame_ms = 100
 audio_queue_max_frames = 100
+silence_rms_threshold = 0.0003
 
 [asr]
 asr_model = "qwen3-asr-flash-realtime"
@@ -159,6 +160,8 @@ Sensitive values are read from environment variables or `.env` and are not writt
 | `DEEPSEEK_API_KEY` | DeepSeek API key, required only when using a DeepSeek translation backend |
 | `DEEPSEEK_BASE_URL` | Optional DeepSeek/OpenAI-compatible API base URL |
 | `LOGFIRE_TOKEN` | Optional token for uploading Logfire telemetry |
+
+`audio.silence_rms_threshold` controls the local silence gate. If Logfire repeatedly shows `Dropping local silence before ASR session starts` and the logged `rms` is below this threshold, RainyASR considers the system audio too quiet and does not open the ASR session. macOS BlackHole input can have very low RMS values, so lower this in Settings > Audio, for example to `0.0003` or below. You can use `scripts/test_capture.py` to inspect the actual `raw_rms`.
 
 ## Development Workflow
 

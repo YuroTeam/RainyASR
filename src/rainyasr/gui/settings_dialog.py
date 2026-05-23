@@ -7,7 +7,7 @@ from typing import override
 
 from pydantic import ValidationError
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFont, QIntValidator, QKeySequence
+from PySide6.QtGui import QColor, QDoubleValidator, QFont, QIntValidator, QKeySequence
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -173,6 +173,16 @@ class SettingsDialog(QDialog):
         )
         self._add_form_row(form, "Queue max", audio_queue_row)
 
+        silence_threshold_row, self._silence_threshold_edit = self._float_field_row(
+            tab,
+            value=self._config.audio.silence_rms_threshold,
+            minimum=0.0,
+            maximum=1.0,
+            decimals=6,
+            unit="RMS",
+        )
+        self._add_form_row(form, "Silence threshold", silence_threshold_row)
+
         return tab
 
     def _build_recognition_tab(self) -> QWidget:
@@ -289,6 +299,12 @@ class SettingsDialog(QDialog):
                     label="Queue max",
                     minimum=10,
                     maximum=1000,
+                ),
+                "silence_rms_threshold": self._float_value(
+                    self._silence_threshold_edit,
+                    label="Silence threshold",
+                    minimum=0.0,
+                    maximum=1.0,
                 ),
             }
         )
@@ -574,6 +590,40 @@ class SettingsDialog(QDialog):
         return row, edit
 
     @staticmethod
+    def _float_field_row(
+        parent: QWidget,
+        *,
+        value: float,
+        minimum: float,
+        maximum: float,
+        decimals: int,
+        unit: str,
+    ) -> tuple[QWidget, QLineEdit]:
+        row = QWidget(parent)
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        row.setMinimumHeight(CONTROL_HEIGHT)
+
+        edit = QLineEdit(row)
+        edit.setProperty("numericField", True)
+        validator = QDoubleValidator(minimum, maximum, decimals, edit)
+        validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+        edit.setValidator(validator)
+        edit.setText(f"{value:.6g}")
+        edit.setPlaceholderText(f"{minimum:.0f}-{maximum:.0f} {unit}")
+        edit.setAccessibleName(unit)
+        edit.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        unit_label = QLabel(unit, row)
+        unit_label.setProperty("unitLabel", True)
+
+        layout.addWidget(edit)
+        layout.addWidget(unit_label)
+        layout.addStretch(1)
+        return row, edit
+
+    @staticmethod
     def _segmented_buttons(
         parent: QWidget,
         group: QButtonGroup,
@@ -652,6 +702,25 @@ class SettingsDialog(QDialog):
             raise ValueError(f"{label} is required.")
         try:
             value = int(text)
+        except ValueError:
+            raise ValueError(f"{label} must be a number.") from None
+        if not minimum <= value <= maximum:
+            raise ValueError(f"{label} must be between {minimum} and {maximum}.")
+        return value
+
+    def _float_value(
+        self,
+        edit: QLineEdit,
+        *,
+        label: str,
+        minimum: float,
+        maximum: float,
+    ) -> float:
+        text = edit.text().strip()
+        if not text:
+            raise ValueError(f"{label} is required.")
+        try:
+            value = float(text)
         except ValueError:
             raise ValueError(f"{label} must be a number.") from None
         if not minimum <= value <= maximum:

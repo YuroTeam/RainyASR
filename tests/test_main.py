@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from typing import Any
 
@@ -25,6 +26,7 @@ def _sample_config() -> AppConfig:
                 "channels": 2,
                 "frame_ms": 50,
                 "audio_queue_max_frames": 120,
+                "silence_rms_threshold": 0.0007,
             },
             "asr": {
                 "asr_model": "custom-asr",
@@ -337,11 +339,13 @@ async def test_controller_start_wires_audio_worker_providers_and_hotkey(
     worker = FakeWorker.instances[0]
     assert worker.started == 1
     assert worker.capture_audio is True
+    assert fake_app.window._playback_active is True
     assert worker.kwargs["target_lang"] == "en"
     assert worker.kwargs["sample_rate"] == 24000
     assert worker.kwargs["channels"] == 2
     assert worker.kwargs["frame_ms"] == 50
     assert worker.kwargs["audio_queue_max_frames"] == 120
+    assert worker.kwargs["silence_rms_threshold"] == 0.0007
     assert worker.kwargs["audio_device_detector"].find_loopback_device().name == "Fake Loopback"
 
     assert asr_factory.calls == [
@@ -360,6 +364,7 @@ async def test_controller_start_wires_audio_worker_providers_and_hotkey(
     await controller.shutdown()
 
     assert worker.stopped == 1
+    assert fake_app.window._playback_active is False
     assert FakeHotkeyManager.instances[0].stopped == 1
     assert saved_configs == [config]
 
@@ -552,6 +557,42 @@ def test_window_settings_signal_opens_settings(fake_app: FakeApp) -> None:
 
 
 @pytest.mark.asyncio
+async def test_window_playback_signal_pauses_and_resumes_worker(fake_app: FakeApp) -> None:
+    config = _sample_config()
+    controller = RainyASRController(
+        fake_app,
+        config,
+        dashscope_api_key="dash-key",
+        deepseek_api_key="deep-key",
+        audio_device_detector=FakeAudioDeviceDetector(),
+        worker_factory=FakeWorker,
+        hotkey_manager_factory=FakeHotkeyManager,
+        tray_available=lambda: False,
+        config_saver=lambda _config: None,
+    )
+
+    assert await controller.start() is True
+    old_worker = FakeWorker.instances[0]
+
+    fake_app.window.playback_toggle_requested.emit()
+    await asyncio.sleep(0)
+
+    assert controller.worker is None
+    assert old_worker.stopped == 1
+    assert fake_app.window._playback_active is False
+
+    fake_app.window.playback_toggle_requested.emit()
+    await asyncio.sleep(0)
+
+    assert len(FakeWorker.instances) == 2
+    assert controller.worker is FakeWorker.instances[1]
+    assert FakeWorker.instances[1].started == 1
+    assert fake_app.window._playback_active is True
+
+    await controller.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_apply_settings_restarts_hotkey_and_worker(fake_app: FakeApp) -> None:
     config = _sample_config()
     new_config = config.model_copy(deep=True)
@@ -587,5 +628,38 @@ async def test_apply_settings_restarts_hotkey_and_worker(fake_app: FakeApp) -> N
     assert len(FakeWorker.instances) == 2
     assert FakeWorker.instances[1].started == 1
     assert FakeWorker.instances[1].kwargs["sample_rate"] == 44100
+
+    await controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_apply_settings_keeps_worker_paused(fake_app: FakeApp) -> None:
+    config = _sample_config()
+    new_config = config.model_copy(deep=True)
+    new_config.audio.sample_rate = 44100
+    controller = RainyASRController(
+        fake_app,
+        config,
+        dashscope_api_key="dash-key",
+        deepseek_api_key="deep-key",
+        audio_device_detector=FakeAudioDeviceDetector(),
+        worker_factory=FakeWorker,
+        hotkey_manager_factory=FakeHotkeyManager,
+        tray_available=lambda: False,
+        config_saver=lambda _config: None,
+    )
+
+    assert await controller.start() is True
+    old_worker = FakeWorker.instances[0]
+    await controller._toggle_playback()
+
+    assert controller.worker is None
+    assert old_worker.stopped == 1
+
+    await controller.apply_settings(new_config, ApiKeyValues("dash-key", "deep-key"))
+
+    assert controller.worker is None
+    assert len(FakeWorker.instances) == 1
+    assert fake_app.window._playback_active is False
 
     await controller.shutdown()

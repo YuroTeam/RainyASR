@@ -17,12 +17,14 @@ def test_app_config_save_round_trips(tmp_path, monkeypatch: pytest.MonkeyPatch) 
 
     config = AppConfig()
     config.audio.sample_rate = 48000
+    config.audio.silence_rms_threshold = 0.0004
     config.subtitle.font_size = 36
 
     config.save()
 
     loaded = AppConfig.load()
     assert loaded.audio.sample_rate == 48000
+    assert loaded.audio.silence_rms_threshold == 0.0004
     assert loaded.subtitle.font_size == 36
 
 

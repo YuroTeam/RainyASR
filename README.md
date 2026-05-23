@@ -124,6 +124,7 @@ sample_rate = 16000
 channels = 1
 frame_ms = 100
 audio_queue_max_frames = 100
+silence_rms_threshold = 0.0003
 
 [asr]
 asr_model = "qwen3-asr-flash-realtime"
@@ -157,6 +158,8 @@ target_lang = "zh"
 | `DEEPSEEK_API_KEY` | DeepSeek API Key，仅使用 DeepSeek 翻译后端时需要 |
 | `DEEPSEEK_BASE_URL` | DeepSeek/OpenAI 兼容 API Base URL，可选 |
 | `LOGFIRE_TOKEN` | 存在时上传 Logfire telemetry，可选 |
+
+`audio.silence_rms_threshold` 控制本地静音门控。Logfire 中若持续看到 `Dropping local silence before ASR session starts`，并且记录的 `rms` 低于该阈值，说明 RainyASR 认为当前系统音频太低而没有打开 ASR session。macOS BlackHole 的实际 RMS 可能很低，可在 Settings > Audio 调低该值，例如 `0.0003` 或更低；也可以用 `scripts/test_capture.py` 观察实际 `raw_rms`。
 
 ## 开发工作流
 

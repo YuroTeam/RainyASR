@@ -86,7 +86,7 @@ class SubtitleWorker(QObject):
         audio_gain: float = DEFAULT_GAIN,
         backpressure_reconnect_threshold: int = 50,
         enable_silence_gate: bool = True,
-        silence_rms_threshold: float = 0.005,
+        silence_rms_threshold: float = 0.0003,
         speech_start_frames: int = 2,
         silence_stop_ms: int = 3000,
         preroll_ms: int = 500,
@@ -413,6 +413,7 @@ class SubtitleWorker(QObject):
                     logfire.debug(
                         "Holding active audio frame until speech gate opens",
                         rms=rms,
+                        silence_rms_threshold=self._silence_rms_threshold,
                         speech_run_frames=self._speech_run_frames,
                     )
                     return
@@ -423,6 +424,8 @@ class SubtitleWorker(QObject):
                 )
                 logfire.info(
                     "Speech detected; opening ASR gate",
+                    rms=rms,
+                    silence_rms_threshold=self._silence_rms_threshold,
                     preroll_frames=len(self._preroll_audio_frames),
                     speech_start_frames=len(self._pending_speech_audio_frames),
                 )
@@ -437,7 +440,11 @@ class SubtitleWorker(QObject):
         self._pending_speech_audio_frames.clear()
         if not self._speech_gate_open:
             self._append_preroll(pcm_bytes)
-            logfire.debug("Dropping local silence before ASR session starts", rms=rms)
+            logfire.debug(
+                "Dropping local silence before ASR session starts",
+                rms=rms,
+                silence_rms_threshold=self._silence_rms_threshold,
+            )
             return
 
         self._silence_run_frames += 1
@@ -449,6 +456,8 @@ class SubtitleWorker(QObject):
         if should_stop:
             logfire.info(
                 "Closing ASR gate after local silence",
+                rms=rms,
+                silence_rms_threshold=self._silence_rms_threshold,
                 silence_frames=self._silence_run_frames,
             )
             self._speech_gate_open = False

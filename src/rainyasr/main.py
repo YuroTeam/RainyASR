@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import platform
 import signal
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 
 import logfire
@@ -102,6 +103,7 @@ class RainyASRController(QObject):
         self._show_hide_action: QAction | None = None
         self._settings_action: QAction | None = None
         self._quit_action: QAction | None = None
+        self._playback_toggle_in_progress = False
         self._shutdown_requested = False
         self._shutting_down = False
         self._previous_quit_on_last_window_closed = self._app.qapplication.quitOnLastWindowClosed()
@@ -109,6 +111,8 @@ class RainyASRController(QObject):
         self._app.qapplication.setQuitOnLastWindowClosed(False)
         self._app.window.closed.connect(self.request_quit)
         self._app.window.settings_requested.connect(self.open_settings)
+        self._app.window.playback_toggle_requested.connect(self.toggle_playback)
+        self._set_playback_active(False)
 
     @property
     def worker(self) -> SubtitleWorker | None:
@@ -181,6 +185,10 @@ class RainyASRController(QObject):
             self._deepseek_api_key = api_keys.deepseek_api_key
             self._app.window.apply_config(new_config.subtitle)
 
+    def toggle_playback(self) -> None:
+        """Start or pause the subtitle worker from the overlay control."""
+        self._schedule_controller_task(self._toggle_playback())
+
     async def apply_settings(self, new_config: AppConfig, api_keys: ApiKeyValues) -> None:
         """Apply accepted settings and restart affected runtime components."""
         old_config = self._config
@@ -195,7 +203,8 @@ class RainyASRController(QObject):
         if old_config.hotkey.toggle_hotkey != new_config.hotkey.toggle_hotkey:
             self._start_hotkey()
 
-        if self._worker_restart_required(
+        worker_was_running = self._worker is not None
+        if worker_was_running and self._worker_restart_required(
             old_config,
             new_config,
             old_dashscope_api_key,
@@ -213,11 +222,26 @@ class RainyASRController(QObject):
         await self._stop_worker()
         await self._start_worker()
 
+    async def _toggle_playback(self) -> None:
+        if self._playback_toggle_in_progress:
+            return
+
+        self._playback_toggle_in_progress = True
+        try:
+            if self._worker is None:
+                await self._start_worker()
+            else:
+                await self._stop_worker()
+        finally:
+            self._playback_toggle_in_progress = False
+
     async def _start_worker(self) -> bool:
         if self._worker is not None:
+            self._set_playback_active(True)
             return True
 
         if not self._has_api_keys() and not self._prompt_for_missing_api_keys():
+            self._set_playback_active(False)
             return False
 
         try:
@@ -228,6 +252,7 @@ class RainyASRController(QObject):
                 "Audio loopback device not found",
                 self._audio_setup_hint(str(exc)),
             )
+            self._set_playback_active(False)
             return False
         except Exception as exc:
             self._present_message(
@@ -235,6 +260,7 @@ class RainyASRController(QObject):
                 "Audio device detection failed",
                 f"RainyASR could not inspect audio devices: {exc}",
             )
+            self._set_playback_active(False)
             return False
 
         worker = self._create_worker(device)
@@ -251,17 +277,21 @@ class RainyASRController(QObject):
                 "RainyASR failed to start",
                 str(exc),
             )
+            self._set_playback_active(False)
             return False
 
         self._worker = worker
+        self._set_playback_active(True)
         return True
 
     async def _stop_worker(self) -> None:
         worker = self._worker
         if worker is None:
+            self._set_playback_active(False)
             return
 
         self._worker = None
+        self._set_playback_active(False)
         with contextlib.suppress(Exception):
             await worker.stop()
 
@@ -287,6 +317,7 @@ class RainyASRController(QObject):
             channels=self._config.audio.channels,
             frame_ms=self._config.audio.frame_ms,
             audio_queue_max_frames=self._config.audio.audio_queue_max_frames,
+            silence_rms_threshold=self._config.audio.silence_rms_threshold,
             audio_device_detector=_FixedAudioDeviceDetector(device),
         )
 
@@ -440,9 +471,36 @@ class RainyASRController(QObject):
     def _handle_worker_state_changed(self, state: str) -> None:
         if self._tray_icon is not None:
             self._tray_icon.setToolTip(f"RainyASR - {state}")
+        if state in {"starting", "running", "asr_running", "reconnecting"}:
+            self._set_playback_active(True)
+        elif state == "stopped":
+            self._set_playback_active(False)
 
     def _present_message(self, level: str, title: str, message: str) -> None:
         self._message_presenter(self._app.window, level, title, message)
+
+    def _set_playback_active(self, active: bool) -> None:
+        self._app.window.set_playback_active(active)
+
+    def _schedule_controller_task(self, coroutine: Coroutine[object, object, None]) -> None:
+        loop = self._app.loop
+        if loop.is_running() and not loop.is_closed():
+            loop.create_task(coroutine)
+            return
+
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            coroutine.close()
+            logfire.warning("Cannot toggle playback because no event loop is running")
+            return
+
+        if running_loop.is_closed():
+            coroutine.close()
+            logfire.warning("Cannot toggle playback because the event loop is closed")
+            return
+
+        running_loop.create_task(coroutine)
 
     @staticmethod
     def _default_message_presenter(

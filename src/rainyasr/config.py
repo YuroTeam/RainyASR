@@ -43,6 +43,7 @@ class AudioConfig(BaseModel):
     channels: int = Field(default=1, ge=1, le=2)
     frame_ms: int = Field(default=100, ge=20, le=500)
     audio_queue_max_frames: int = Field(default=100, ge=10, le=1000)
+    silence_rms_threshold: float = Field(default=0.0003, ge=0.0, le=1.0)
 
 
 class ASRConfig(BaseModel):

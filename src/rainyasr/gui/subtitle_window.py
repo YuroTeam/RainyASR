@@ -23,6 +23,7 @@ from PySide6.QtGui import (
     QPainter,
     QPaintEvent,
     QPen,
+    QPolygonF,
     QResizeEvent,
 )
 from PySide6.QtWidgets import QGraphicsDropShadowEffect, QLabel, QPushButton, QVBoxLayout, QWidget
@@ -60,11 +61,55 @@ class _OverlayControlButton(QPushButton):
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
 
-        if self._icon_name == "settings":
+        if self._icon_name == "play":
+            self._paint_play_icon(painter, icon_color)
+        elif self._icon_name == "pause":
+            self._paint_pause_icon(painter)
+        elif self._icon_name == "settings":
             self._paint_settings_icon(painter)
         else:
             self._paint_close_icon(painter)
         painter.end()
+
+    def set_icon_name(self, icon_name: str) -> None:
+        """Switch the painted icon without replacing the button widget."""
+        if self._icon_name == icon_name:
+            return
+        self._icon_name = icon_name
+        self.update()
+
+    def _paint_play_icon(self, painter: QPainter, icon_color: QColor) -> None:
+        center = QPointF(self.width() / 2, self.height() / 2)
+        painter.setBrush(icon_color)
+        painter.drawPolygon(
+            QPolygonF(
+                (
+                    QPointF(center.x() - 3.8, center.y() - 6.1),
+                    QPointF(center.x() - 3.8, center.y() + 6.1),
+                    QPointF(center.x() + 6.0, center.y()),
+                )
+            )
+        )
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+    def _paint_pause_icon(self, painter: QPainter) -> None:
+        center = QPointF(self.width() / 2, self.height() / 2)
+        painter.drawLine(
+            QLineF(
+                center.x() - 3.6,
+                center.y() - 5.8,
+                center.x() - 3.6,
+                center.y() + 5.8,
+            )
+        )
+        painter.drawLine(
+            QLineF(
+                center.x() + 3.6,
+                center.y() - 5.8,
+                center.x() + 3.6,
+                center.y() + 5.8,
+            )
+        )
 
     def _paint_close_icon(self, painter: QPainter) -> None:
         center = QPointF(self.width() / 2, self.height() / 2)
@@ -130,6 +175,7 @@ class SubtitleWindow(QWidget):
 
     close_requested = Signal()
     settings_requested = Signal()
+    playback_toggle_requested = Signal()
     closed = Signal()
 
     def __init__(self, config: SubtitleConfig | None = None) -> None:
@@ -137,6 +183,7 @@ class SubtitleWindow(QWidget):
         self._config = config or SubtitleConfig()
         self._drag_pos: QPoint | None = None
         self._hidden_for_empty_subtitle = False
+        self._playback_active = False
         self._hover_sync_timer = QTimer(self)
 
         self._setup_window()
@@ -241,6 +288,15 @@ class SubtitleWindow(QWidget):
 
     def _setup_control_buttons(self) -> None:
         """Small hover-revealed controls for frameless windows."""
+        self._playback_button = _OverlayControlButton("play", self)
+        self._playback_button.setObjectName("subtitlePlaybackButton")
+        self._playback_button.setFixedSize(CLOSE_BUTTON_SIZE, CLOSE_BUTTON_SIZE)
+        self._playback_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._playback_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._playback_button.clicked.connect(self._request_playback_toggle)
+        self._playback_button.hide()
+        self._sync_playback_button_state()
+
         self._settings_button = _OverlayControlButton("settings", self)
         self._settings_button.setObjectName("subtitleSettingsButton")
         self._settings_button.setAccessibleName("Open settings")
@@ -268,6 +324,7 @@ class SubtitleWindow(QWidget):
             self,
             self._original_label,
             self._translated_label,
+            self._playback_button,
             self._settings_button,
             self._close_button,
         ):
@@ -309,6 +366,7 @@ class SubtitleWindow(QWidget):
                 padding: 6px 14px;
             }}
 
+            QPushButton#subtitlePlaybackButton,
             QPushButton#subtitleSettingsButton,
             QPushButton#subtitleCloseButton {{
                 color: rgba(255, 255, 255, 0.88);
@@ -318,6 +376,26 @@ class SubtitleWindow(QWidget):
                 padding: 0;
                 font-size: 16px;
                 font-weight: 600;
+            }}
+
+            QPushButton#subtitlePlaybackButton[running="true"]:hover {{
+                color: #FFFFFF;
+                background-color: rgba(217, 119, 6, 0.92);
+                border-color: rgba(255, 255, 255, 0.46);
+            }}
+
+            QPushButton#subtitlePlaybackButton[running="true"]:pressed {{
+                background-color: rgba(180, 83, 9, 0.96);
+            }}
+
+            QPushButton#subtitlePlaybackButton[running="false"]:hover {{
+                color: #FFFFFF;
+                background-color: rgba(22, 163, 74, 0.92);
+                border-color: rgba(255, 255, 255, 0.46);
+            }}
+
+            QPushButton#subtitlePlaybackButton[running="false"]:pressed {{
+                background-color: rgba(21, 128, 61, 0.96);
             }}
 
             QPushButton#subtitleSettingsButton:hover {{
@@ -378,7 +456,9 @@ class SubtitleWindow(QWidget):
     def apply_config(self, config: SubtitleConfig) -> None:
         """Re-apply appearance settings from a new config object."""
         controls_were_visible = (
-            not self._close_button.isHidden() or not self._settings_button.isHidden()
+            not self._close_button.isHidden()
+            or not self._settings_button.isHidden()
+            or not self._playback_button.isHidden()
         )
         self._config = config
         self._apply_window_size_constraints()
@@ -389,6 +469,13 @@ class SubtitleWindow(QWidget):
         self._sync_window_visibility()
         if self._has_visible_subtitle_text():
             self._set_controls_visible(controls_were_visible or self._mouse_is_inside_window())
+
+    def set_playback_active(self, active: bool) -> None:
+        """Update the play/pause control to reflect whether capture is running."""
+        if self._playback_active == active:
+            return
+        self._playback_active = active
+        self._sync_playback_button_state()
 
     # -- Internal helpers --------------------------------------------------
 
@@ -464,11 +551,17 @@ class SubtitleWindow(QWidget):
 
     def _position_control_buttons(self) -> None:
         """Keep overlay controls anchored to the top-right corner."""
-        if not hasattr(self, "_close_button") or not hasattr(self, "_settings_button"):
+        if (
+            not hasattr(self, "_close_button")
+            or not hasattr(self, "_settings_button")
+            or not hasattr(self, "_playback_button")
+        ):
             return
 
         close_x = max(CONTROL_MARGIN, self.width() - CLOSE_BUTTON_SIZE - CONTROL_MARGIN)
         settings_x = max(CONTROL_MARGIN, close_x - CLOSE_BUTTON_SIZE - CONTROL_GAP)
+        playback_x = max(CONTROL_MARGIN, settings_x - CLOSE_BUTTON_SIZE - CONTROL_GAP)
+        self._playback_button.move(playback_x, CONTROL_MARGIN)
         self._settings_button.move(settings_x, CONTROL_MARGIN)
         self._close_button.move(close_x, CONTROL_MARGIN)
         self._raise_control_buttons()
@@ -476,12 +569,14 @@ class SubtitleWindow(QWidget):
     def _set_controls_visible(self, visible: bool) -> None:
         """Show overlay controls only when useful and non-empty."""
         should_show = visible and self._has_visible_subtitle_text()
+        self._playback_button.setVisible(should_show)
         self._settings_button.setVisible(should_show)
         self._close_button.setVisible(should_show)
         if should_show:
             self._raise_control_buttons()
 
     def _raise_control_buttons(self) -> None:
+        self._playback_button.raise_()
         self._settings_button.raise_()
         self._close_button.raise_()
 
@@ -491,15 +586,34 @@ class SubtitleWindow(QWidget):
         self._set_controls_visible(False)
 
     def _sync_controls_with_cursor(self) -> None:
-        if not hasattr(self, "_close_button") or not hasattr(self, "_settings_button"):
+        if (
+            not hasattr(self, "_close_button")
+            or not hasattr(self, "_settings_button")
+            or not hasattr(self, "_playback_button")
+        ):
             return
         if not self.isVisible():
             self._set_controls_visible(False)
             return
         self._set_controls_visible(self._mouse_is_inside_window())
 
+    def _sync_playback_button_state(self) -> None:
+        icon_name = "pause" if self._playback_active else "play"
+        tooltip = "Pause transcription" if self._playback_active else "Start transcription"
+        self._playback_button.set_icon_name(icon_name)
+        self._playback_button.setAccessibleName(tooltip)
+        self._playback_button.setToolTip(tooltip)
+        self._playback_button.setProperty("running", self._playback_active)
+        self._playback_button.style().unpolish(self._playback_button)
+        self._playback_button.style().polish(self._playback_button)
+        self._playback_button.update()
+
     def _mouse_is_inside_window(self) -> bool:
         return self.rect().contains(self.mapFromGlobal(QCursor.pos()))
+
+    def _request_playback_toggle(self) -> None:
+        """Ask the application shell to start or pause transcription."""
+        self.playback_toggle_requested.emit()
 
     def _request_settings(self) -> None:
         """Ask the application shell to open settings."""

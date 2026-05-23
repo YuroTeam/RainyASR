@@ -93,6 +93,7 @@ async def run_fake(app: QApplication) -> None:
     window = SubtitleWindow()
     asr = FakeASRProvider()
     translator = FakeTranslationProvider()
+
     worker = SubtitleWorker(
         asr_provider=asr,
         translation_provider=translator,
@@ -135,6 +136,12 @@ async def run_real(args: argparse.Namespace) -> None:
     if not translation_base_url:
         translation_base_url = EnvConfig.deepseek_base_url()
 
+    silence_rms_threshold = (
+        args.silence_rms_threshold
+        if args.silence_rms_threshold is not None
+        else config.audio.silence_rms_threshold
+    )
+
     window = SubtitleWindow(config.subtitle)
     asr = QwenRealtimeASRProvider(
         api_key=dashscope_key,
@@ -157,7 +164,7 @@ async def run_real(args: argparse.Namespace) -> None:
         frame_ms=config.audio.frame_ms,
         audio_queue_max_frames=config.audio.audio_queue_max_frames,
         enable_silence_gate=not args.disable_silence_gate,
-        silence_rms_threshold=args.silence_rms_threshold,
+        silence_rms_threshold=silence_rms_threshold,
         speech_start_frames=args.speech_start_frames,
         silence_stop_ms=args.silence_stop_ms,
         preroll_ms=args.preroll_ms,
@@ -169,7 +176,7 @@ async def run_real(args: argparse.Namespace) -> None:
     print(
         "[real] Worker running. "
         f"silence_gate={not args.disable_silence_gate}, "
-        f"threshold={args.silence_rms_threshold}, "
+        f"threshold={silence_rms_threshold}, "
         f"silence_stop_ms={args.silence_stop_ms}, "
         f"preroll_ms={args.preroll_ms}. "
         "Press Ctrl+C to stop."
@@ -199,7 +206,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--silence-rms-threshold",
         type=float,
-        default=0.005,
+        default=None,
         help="Local RMS threshold that opens the ASR gate",
     )
     parser.add_argument(

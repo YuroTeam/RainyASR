@@ -76,6 +76,7 @@ class TestSubtitleWindow:
 
         window.apply_config(SubtitleConfig(font_size=36))
 
+        assert not window._playback_button.isHidden()
         assert not window._settings_button.isHidden()
         assert not window._close_button.isHidden()
 
@@ -91,6 +92,7 @@ class TestSubtitleWindow:
 
         window._sync_controls_with_cursor()
 
+        assert not window._playback_button.isHidden()
         assert not window._settings_button.isHidden()
         assert not window._close_button.isHidden()
 
@@ -134,6 +136,7 @@ class TestSubtitleWindow:
         window.update_subtitle("", "")
 
         assert not window.isVisible()
+        assert window._playback_button.isHidden()
         assert window._close_button.isHidden()
 
     def test_text_restores_window_hidden_by_empty_text(self, window: SubtitleWindow) -> None:
@@ -153,6 +156,7 @@ class TestSubtitleWindow:
     def test_close_button_starts_hidden(self, window: SubtitleWindow) -> None:
         window.update_subtitle("Hello", "你好")
 
+        assert window._playback_button.isHidden()
         assert window._close_button.isHidden()
         assert window._settings_button.isHidden()
 
@@ -161,13 +165,30 @@ class TestSubtitleWindow:
 
         window._set_controls_visible(True)
 
+        assert not window._playback_button.isHidden()
         assert not window._close_button.isHidden()
         assert not window._settings_button.isHidden()
 
     def test_control_buttons_are_icon_only_and_same_size(self, window: SubtitleWindow) -> None:
+        assert window._playback_button.text() == ""
         assert window._settings_button.text() == ""
         assert window._close_button.text() == ""
+        assert window._playback_button.size() == window._close_button.size()
         assert window._settings_button.size() == window._close_button.size()
+
+    def test_playback_button_reflects_active_state(self, window: SubtitleWindow) -> None:
+        assert window._playback_button._icon_name == "play"
+        assert window._playback_button.toolTip() == "Start transcription"
+
+        window.set_playback_active(True)
+
+        assert window._playback_button._icon_name == "pause"
+        assert window._playback_button.toolTip() == "Pause transcription"
+
+        window.set_playback_active(False)
+
+        assert window._playback_button._icon_name == "play"
+        assert window._playback_button.toolTip() == "Start transcription"
 
     def test_hovering_label_shows_control_buttons(self, window: SubtitleWindow) -> None:
         window.update_subtitle("Hello", "你好")
@@ -176,6 +197,7 @@ class TestSubtitleWindow:
 
         assert not window._close_button.isHidden()
         assert not window._settings_button.isHidden()
+        assert not window._playback_button.isHidden()
 
     def test_control_buttons_remain_hidden_when_monolingual_mode_has_no_visible_text(
         self, window: SubtitleWindow
@@ -189,6 +211,7 @@ class TestSubtitleWindow:
         assert window._translated_label.isHidden()
         assert window._close_button.isHidden()
         assert window._settings_button.isHidden()
+        assert window._playback_button.isHidden()
 
     def test_control_buttons_are_positioned_top_right(self, window: SubtitleWindow) -> None:
         window.update_subtitle("Hello", "你好", is_partial=True)
@@ -197,6 +220,20 @@ class TestSubtitleWindow:
         assert window._close_button.y() == 8
         assert window._settings_button.x() == window._close_button.x() - 30
         assert window._settings_button.y() == 8
+        assert window._playback_button.x() == window._settings_button.x() - 30
+        assert window._playback_button.y() == 8
+
+    def test_playback_button_click_emits_signal(self, qtbot, window: SubtitleWindow) -> None:
+        window.update_subtitle("Hello", "你好")
+        window.show()
+        window._set_controls_visible(True)
+
+        playback_requested = []
+        window.playback_toggle_requested.connect(lambda: playback_requested.append(True))
+
+        qtbot.mouseClick(window._playback_button, Qt.MouseButton.LeftButton)
+
+        assert playback_requested == [True]
 
     def test_settings_button_click_emits_signal(self, qtbot, window: SubtitleWindow) -> None:
         window.update_subtitle("Hello", "你好")

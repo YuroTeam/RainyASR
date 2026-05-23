@@ -19,6 +19,7 @@ def _sample_config() -> AppConfig:
                 "channels": 2,
                 "frame_ms": 50,
                 "audio_queue_max_frames": 120,
+                "silence_rms_threshold": 0.0007,
             },
             "asr": {
                 "asr_model": "custom-asr",
@@ -66,6 +67,8 @@ class TestSettingsDialog:
         assert dialog._frame_ms_edit.placeholderText() == "20-500 ms"
         assert dialog._audio_queue_edit.text() == "120"
         assert dialog._audio_queue_edit.placeholderText() == "10-1000 frames"
+        assert dialog._silence_threshold_edit.text() == "0.0007"
+        assert dialog._silence_threshold_edit.placeholderText() == "0-1 RMS"
         assert dialog._asr_model_edit.text() == "custom-asr"
         assert dialog._combo_value(dialog._asr_language_combo) == "en"
         assert dialog._asr_format_value() == "wav"
@@ -102,6 +105,7 @@ class TestSettingsDialog:
         dialog._channels_group.button(1).setChecked(True)
         dialog._frame_ms_edit.setText("80")
         dialog._audio_queue_edit.setText("240")
+        dialog._silence_threshold_edit.setText("0.0004")
 
         dialog._asr_model_edit.setText("qwen3-asr-flash-realtime")
         dialog._asr_language_combo.setEditText("auto")
@@ -124,6 +128,7 @@ class TestSettingsDialog:
         assert config.audio.channels == 1
         assert config.audio.frame_ms == 80
         assert config.audio.audio_queue_max_frames == 240
+        assert config.audio.silence_rms_threshold == 0.0004
         assert config.asr.asr_model == "qwen3-asr-flash-realtime"
         assert config.asr.asr_language == "auto"
         assert config.asr.asr_format == "pcm"
@@ -151,6 +156,25 @@ class TestSettingsDialog:
         message: str,
     ) -> None:
         dialog._sample_rate_edit.setText(value)
+
+        with pytest.raises(ValueError, match=message):
+            dialog.current_config()
+
+    @pytest.mark.parametrize(
+        ("value", "message"),
+        [
+            ("", "Silence threshold is required."),
+            ("not_a_number", "Silence threshold must be a number."),
+            ("1.1", "Silence threshold must be between 0.0 and 1.0."),
+        ],
+    )
+    def test_silence_threshold_rejects_invalid_input(
+        self,
+        dialog: SettingsDialog,
+        value: str,
+        message: str,
+    ) -> None:
+        dialog._silence_threshold_edit.setText(value)
 
         with pytest.raises(ValueError, match=message):
             dialog.current_config()
