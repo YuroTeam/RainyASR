@@ -236,6 +236,35 @@ def test_start_prompts_and_fails_when_macos_accessibility_is_missing(
     assert FakeGlobalHotKeys.instances == []
 
 
+@pytest.mark.parametrize("platform", ["linux", "win32"])
+def test_start_skips_macos_permission_check_on_linux_and_windows(
+    platform: str,
+    window: QWidget,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(hotkey_module.sys, "platform", platform)
+
+    def fail_if_checked() -> bool:
+        raise AssertionError("macOS accessibility check should not run")
+
+    def fail_if_prompted(message: str) -> None:
+        raise AssertionError(f"macOS permission prompt should not show: {message}")
+
+    manager = GlobalHotkeyManager(
+        window,
+        "ctrl+shift+r",
+        hotkeys_factory=FakeGlobalHotKeys,
+        accessibility_checker=fail_if_checked,
+        permission_notifier=fail_if_prompted,
+    )
+
+    manager.start()
+
+    assert manager.is_running
+    assert len(FakeGlobalHotKeys.instances) == 1
+    assert FakeGlobalHotKeys.instances[0].started == 1
+
+
 def test_default_macos_permission_prompt_uses_target_window_parent(
     window: QWidget,
     monkeypatch: pytest.MonkeyPatch,
