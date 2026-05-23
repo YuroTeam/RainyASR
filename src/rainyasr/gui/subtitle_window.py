@@ -33,6 +33,7 @@ from rainyasr.config import SubtitleConfig
 CONTROL_MARGIN = 8
 CONTROL_GAP = 6
 CLOSE_BUTTON_SIZE = 24
+IDLE_SUBTITLE_TEXT = "RainyASR"
 LAYOUT_MARGIN_X = 20
 LAYOUT_MARGIN_Y = 12
 LAYOUT_SPACING = 6
@@ -182,7 +183,6 @@ class SubtitleWindow(QWidget):
         super().__init__()
         self._config = config or SubtitleConfig()
         self._drag_pos: QPoint | None = None
-        self._hidden_for_empty_subtitle = False
         self._playback_active = False
         self._hover_sync_timer = QTimer(self)
 
@@ -278,10 +278,18 @@ class SubtitleWindow(QWidget):
         self._translated_label.setWordWrap(True)
         self._subtitle_layout.addWidget(self._translated_label)
 
+        self._idle_label = QLabel(IDLE_SUBTITLE_TEXT, self)
+        self._idle_label.setObjectName("subtitleIdleLabel")
+        self._idle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._idle_label.setWordWrap(True)
+        self._subtitle_layout.addWidget(self._idle_label)
+
         self._original_shadow = QGraphicsDropShadowEffect(self._original_label)
         self._translated_shadow = QGraphicsDropShadowEffect(self._translated_label)
+        self._idle_shadow = QGraphicsDropShadowEffect(self._idle_label)
         self._original_label.setGraphicsEffect(self._original_shadow)
         self._translated_label.setGraphicsEffect(self._translated_shadow)
+        self._idle_label.setGraphicsEffect(self._idle_shadow)
 
         self._update_label_visibility()
         self._refresh_subtitle_geometry()
@@ -324,6 +332,7 @@ class SubtitleWindow(QWidget):
             self,
             self._original_label,
             self._translated_label,
+            self._idle_label,
             self._playback_button,
             self._settings_button,
             self._close_button,
@@ -347,9 +356,17 @@ class SubtitleWindow(QWidget):
 
         self._original_label.setFont(font)
         self._translated_label.setFont(font)
+        self._idle_label.setFont(font)
 
         # Colors
-        color = QColor(cfg.text_color).name()
+        text_color = QColor(cfg.text_color)
+        color = text_color.name()
+        idle_color = QColor(text_color)
+        idle_color.setAlpha(184)
+        idle_rgba = (
+            f"rgba({idle_color.red()}, {idle_color.green()}, "
+            f"{idle_color.blue()}, {idle_color.alphaF():.2f})"
+        )
         opacity = cfg.bg_opacity / 100.0
 
         # Glassmorphism: translucent black bg + subtle border
@@ -358,12 +375,17 @@ class SubtitleWindow(QWidget):
 
         style = f"""
             QLabel#subtitleOriginalLabel,
-            QLabel#subtitleTranslatedLabel {{
+            QLabel#subtitleTranslatedLabel,
+            QLabel#subtitleIdleLabel {{
                 color: {color};
                 background-color: {bg_rgba};
                 border: 1px solid {border_rgba};
                 border-radius: 12px;
                 padding: 6px 14px;
+            }}
+
+            QLabel#subtitleIdleLabel {{
+                color: {idle_rgba};
             }}
 
             QPushButton#subtitlePlaybackButton,
@@ -421,7 +443,7 @@ class SubtitleWindow(QWidget):
         self.setStyleSheet(style)
 
         # Text shadow effect for readability on any video/game background
-        for shadow in (self._original_shadow, self._translated_shadow):
+        for shadow in (self._original_shadow, self._translated_shadow, self._idle_shadow):
             shadow.setBlurRadius(8)
             shadow.setColor(QColor(0, 0, 0, 180))
             shadow.setOffset(1, 1)
@@ -451,7 +473,6 @@ class SubtitleWindow(QWidget):
 
         self._refresh_subtitle_geometry()
         self._position_control_buttons()
-        self._sync_window_visibility()
 
     def apply_config(self, config: SubtitleConfig) -> None:
         """Re-apply appearance settings from a new config object."""
@@ -466,8 +487,7 @@ class SubtitleWindow(QWidget):
         self._update_label_visibility()
         self._refresh_subtitle_geometry()
         self._position_control_buttons()
-        self._sync_window_visibility()
-        if self._has_visible_subtitle_text():
+        if self._has_visible_content():
             self._set_controls_visible(controls_were_visible or self._mouse_is_inside_window())
 
     def set_playback_active(self, active: bool) -> None:
@@ -481,6 +501,12 @@ class SubtitleWindow(QWidget):
 
     def _update_label_visibility(self) -> None:
         """Show/hide labels based on bilingual mode and content."""
+        self._idle_label.setVisible(not self._has_visible_subtitle_text())
+        if self._idle_label.isVisible():
+            self._original_label.hide()
+            self._translated_label.hide()
+            return
+
         if self._config.bilingual_mode:
             self._original_label.setHidden(not self._original_label.text())
             self._translated_label.setHidden(not self._translated_label.text())
@@ -494,12 +520,19 @@ class SubtitleWindow(QWidget):
             return bool(self._original_label.text() or self._translated_label.text())
         return bool(self._translated_label.text())
 
+    def _has_visible_content(self) -> bool:
+        """Return whether the overlay has a visible subtitle or idle surface."""
+        return any(
+            not label.isHidden()
+            for label in (self._original_label, self._translated_label, self._idle_label)
+        )
+
     def _refresh_subtitle_geometry(self) -> None:
         """Resize subtitles by wrapped line count while keeping width fixed."""
         label_width = self._label_width()
         visible_labels = [
             label
-            for label in (self._original_label, self._translated_label)
+            for label in (self._original_label, self._translated_label, self._idle_label)
             if not label.isHidden()
         ]
 
@@ -536,19 +569,6 @@ class SubtitleWindow(QWidget):
         bounds = metrics.boundingRect(QRect(0, 0, text_width, 100000), flags, text)
         return max(1, round(bounds.height() / max(1, metrics.lineSpacing())))
 
-    def _sync_window_visibility(self) -> None:
-        """Hide only empty subtitles, and restore only windows hidden for that reason."""
-        if self._has_visible_subtitle_text():
-            if self._hidden_for_empty_subtitle:
-                self.show()
-            self._hidden_for_empty_subtitle = False
-            return
-
-        if self.isVisible() or self._hidden_for_empty_subtitle:
-            self.hide()
-            self._hidden_for_empty_subtitle = True
-            self._set_controls_visible(False)
-
     def _position_control_buttons(self) -> None:
         """Keep overlay controls anchored to the top-right corner."""
         if (
@@ -567,8 +587,8 @@ class SubtitleWindow(QWidget):
         self._raise_control_buttons()
 
     def _set_controls_visible(self, visible: bool) -> None:
-        """Show overlay controls only when useful and non-empty."""
-        should_show = visible and self._has_visible_subtitle_text()
+        """Show overlay controls when the window has a visible hover target."""
+        should_show = visible and self._has_visible_content()
         self._playback_button.setVisible(should_show)
         self._settings_button.setVisible(should_show)
         self._close_button.setVisible(should_show)

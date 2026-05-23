@@ -9,7 +9,11 @@ from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import QApplication
 
 from rainyasr.config import SubtitleConfig
-from rainyasr.gui.subtitle_window import SubtitleWindow, configure_macos_overlay_app
+from rainyasr.gui.subtitle_window import (
+    IDLE_SUBTITLE_TEXT,
+    SubtitleWindow,
+    configure_macos_overlay_app,
+)
 
 
 @pytest.fixture
@@ -30,11 +34,18 @@ class TestSubtitleWindow:
         assert flags & Qt.WindowType.Tool
         assert window.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
 
+    def test_idle_surface_is_visible_before_audio_arrives(self, window: SubtitleWindow) -> None:
+        assert window._original_label.isHidden()
+        assert window._translated_label.isHidden()
+        assert not window._idle_label.isHidden()
+        assert window._idle_label.text() == IDLE_SUBTITLE_TEXT
+
     def test_update_subtitle_sets_text(self, window: SubtitleWindow) -> None:
         window.update_subtitle("Hello", "你好")
 
         assert window._original_label.text() == "Hello"
         assert window._translated_label.text() == "你好"
+        assert window._idle_label.isHidden()
 
     def test_source_only_update_preserves_previous_translation(
         self, window: SubtitleWindow
@@ -61,6 +72,7 @@ class TestSubtitleWindow:
 
         assert window._original_label.isHidden()
         assert not window._translated_label.isHidden()
+        assert window._idle_label.isHidden()
 
     def test_apply_config_updates_font_size(self, window: SubtitleWindow) -> None:
         config = SubtitleConfig(font_size=36)
@@ -68,6 +80,7 @@ class TestSubtitleWindow:
 
         assert window._original_label.font().pointSize() == 36
         assert window._translated_label.font().pointSize() == 36
+        assert window._idle_label.font().pointSize() == 36
 
     def test_apply_config_keeps_hover_controls_visible(self, window: SubtitleWindow) -> None:
         window.update_subtitle("Hello", "你好")
@@ -106,13 +119,16 @@ class TestSubtitleWindow:
     def test_apply_config_reuses_shadow_effects(self, window: SubtitleWindow) -> None:
         original_shadow = window._original_shadow
         translated_shadow = window._translated_shadow
+        idle_shadow = window._idle_shadow
 
         window.apply_config(SubtitleConfig(font_size=36))
 
         assert window._original_shadow is original_shadow
         assert window._translated_shadow is translated_shadow
+        assert window._idle_shadow is idle_shadow
         assert window._original_label.graphicsEffect() is original_shadow
         assert window._translated_label.graphicsEffect() is translated_shadow
+        assert window._idle_label.graphicsEffect() is idle_shadow
 
     def test_apply_config_adjusts_window_size(self, window: SubtitleWindow) -> None:
         window.update_subtitle("Hello world", "你好世界")
@@ -127,26 +143,30 @@ class TestSubtitleWindow:
 
         assert window._original_label.isHidden()
         assert window._translated_label.isHidden()
+        assert not window._idle_label.isHidden()
 
-    def test_empty_text_hides_visible_window(self, window: SubtitleWindow) -> None:
+    def test_empty_text_keeps_visible_idle_window(self, window: SubtitleWindow) -> None:
         window.update_subtitle("Hello", "你好")
         window.show()
         window._set_controls_visible(True)
 
         window.update_subtitle("", "")
 
-        assert not window.isVisible()
-        assert window._playback_button.isHidden()
-        assert window._close_button.isHidden()
+        assert window.isVisible()
+        assert not window._idle_label.isHidden()
+        assert not window._playback_button.isHidden()
+        assert not window._settings_button.isHidden()
+        assert not window._close_button.isHidden()
 
-    def test_text_restores_window_hidden_by_empty_text(self, window: SubtitleWindow) -> None:
-        window.update_subtitle("Hello", "你好")
+    def test_text_update_does_not_restore_manually_hidden_window(
+        self, window: SubtitleWindow
+    ) -> None:
         window.show()
-        window.update_subtitle("", "")
+        window.hide()
 
         window.update_subtitle("Hello again", "再次你好")
 
-        assert window.isVisible()
+        assert not window.isVisible()
 
     def test_update_subtitle_does_not_show_never_shown_window(self, window: SubtitleWindow) -> None:
         window.update_subtitle("Hello", "你好")
@@ -199,7 +219,7 @@ class TestSubtitleWindow:
         assert not window._settings_button.isHidden()
         assert not window._playback_button.isHidden()
 
-    def test_control_buttons_remain_hidden_when_monolingual_mode_has_no_visible_text(
+    def test_monolingual_source_only_uses_idle_surface_for_controls(
         self, window: SubtitleWindow
     ) -> None:
         window.apply_config(SubtitleConfig(bilingual_mode=False))
@@ -209,9 +229,10 @@ class TestSubtitleWindow:
 
         assert window._original_label.isHidden()
         assert window._translated_label.isHidden()
-        assert window._close_button.isHidden()
-        assert window._settings_button.isHidden()
-        assert window._playback_button.isHidden()
+        assert not window._idle_label.isHidden()
+        assert not window._close_button.isHidden()
+        assert not window._settings_button.isHidden()
+        assert not window._playback_button.isHidden()
 
     def test_control_buttons_are_positioned_top_right(self, window: SubtitleWindow) -> None:
         window.update_subtitle("Hello", "你好", is_partial=True)
