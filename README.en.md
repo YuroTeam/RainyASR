@@ -10,7 +10,7 @@ RainyASR is a cross-platform real-time subtitle translation tool built with Pyth
 - DashScope Qwen realtime speech recognition
 - Qwen-MT/OpenAI-compatible translation interface, defaulting to `qwen-mt-flash`
 - Borderless, always-on-top, draggable subtitle overlay
-- Hover controls on the overlay: a settings gear and a close button
+- Hover controls on the overlay: play/pause, a settings gear, and a close button
 - Bilingual or monolingual subtitle display
 - Configurable font family, font size, window width, text color, background opacity, and subtitle mode
 - Live reload for subtitle appearance settings; audio, ASR, translation target, API key, and hotkey changes restart affected runtime components automatically
@@ -103,9 +103,9 @@ On startup RainyASR:
 Runtime controls:
 
 - Press the default hotkey `ctrl+shift+r` to show or hide subtitles.
-- Hover over the subtitle overlay to reveal the top-right controls: the gear opens Settings, and the close button quits the app.
+- Hover over the subtitle overlay to reveal the top-right controls: the play/pause button stops or resumes the worker for manual request cost control, the gear opens Settings, and the close button quits the app.
 - Use the system tray menu to open Settings, show/hide subtitles, or quit.
-- Subtitle appearance changes in Settings apply immediately. Audio, ASR, translation target, API key, and hotkey changes restart affected components automatically.
+- Subtitle appearance changes in Settings apply immediately. Audio, ASR, translation target, API key, and hotkey changes restart affected components automatically while the worker is running. If playback is paused, those settings apply without automatically resuming the worker.
 - Quitting from the tray, closing the subtitle overlay, pressing terminal `Ctrl+C`, or receiving `SIGTERM` all trigger graceful shutdown.
 - On shutdown, RainyASR stops the worker, unregisters the hotkey, and saves `config/config.toml`.
 
@@ -228,7 +228,7 @@ Checklist:
 
 - The window has no system frame and can be dragged.
 - The subtitle window stays above normal application windows.
-- Hovering over the window shows the settings gear and close button. The gear opens Settings, and the close button quits the current app.
+- Hovering over the window shows play/pause, the settings gear, and the close button. The gear opens Settings, and the close button quits the current app.
 - Changing subtitle font size, color, width, background opacity, or bilingual mode in Settings updates the overlay immediately, and hover controls remain available.
 - Closing one demo subtitle window closes only that window.
 - On Linux, verify always-on-top behavior in the target desktop environment, such as GNOME/X11, GNOME/Wayland, or KDE/Wayland.
