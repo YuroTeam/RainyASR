@@ -60,6 +60,9 @@ convention = "google"
 quote-style = "double"
 indent-style = "space"
 
+[tool.logfire]
+ignore_no_config = true
+
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
