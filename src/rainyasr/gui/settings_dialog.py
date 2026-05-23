@@ -51,6 +51,8 @@ ASR_LANGUAGE_OPTIONS = (
 )
 
 ASR_FORMAT_OPTIONS = ("pcm", "wav", "mp3")
+CHANNEL_OPTIONS = ((1, "Mono"), (2, "Stereo"))
+CHANNEL_VALUES = frozenset(value for value, _label in CHANNEL_OPTIONS)
 CONTROL_HEIGHT = 44
 
 
@@ -148,7 +150,7 @@ class SettingsDialog(QDialog):
         channels_row = self._segmented_buttons(
             tab,
             self._channels_group,
-            ((1, "Mono"), (2, "Stereo")),
+            CHANNEL_OPTIONS,
             checked_id=self._config.audio.channels,
         )
         self._add_form_row(form, "Channels", channels_row)
@@ -629,20 +631,23 @@ class SettingsDialog(QDialog):
         text = edit.text().strip()
         if not text:
             raise ValueError(f"{label} is required.")
-        value = int(text)
+        try:
+            value = int(text)
+        except ValueError:
+            raise ValueError(f"{label} must be a number.") from None
         if not minimum <= value <= maximum:
             raise ValueError(f"{label} must be between {minimum} and {maximum}.")
         return value
 
     def _channel_value(self) -> int:
         checked_id = self._channels_group.checkedId()
-        if checked_id not in {1, 2}:
+        if checked_id not in CHANNEL_VALUES:
             raise ValueError("Audio channel mode is required.")
         return checked_id
 
     def _asr_format_value(self) -> str:
         checked_id = self._asr_format_group.checkedId()
-        if checked_id < 0:
+        if not 0 <= checked_id < len(ASR_FORMAT_OPTIONS):
             raise ValueError("ASR audio format is required.")
         return ASR_FORMAT_OPTIONS[checked_id]
 
@@ -651,7 +656,7 @@ class SettingsDialog(QDialog):
         try:
             return ASR_FORMAT_OPTIONS.index(value)
         except ValueError:
-            return 0
+            return -1
 
     @staticmethod
     def _add_combo_options(combo: QComboBox, options: tuple[tuple[str, str], ...]) -> None:

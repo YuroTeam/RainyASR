@@ -131,6 +131,49 @@ class TestSettingsDialog:
         assert config.hotkey.toggle_hotkey == "ctrl+alt+s"
         assert config.language.target_lang == "ja"
 
+    @pytest.mark.parametrize(
+        ("value", "message"),
+        [
+            ("", "Sample rate is required."),
+            ("not_a_number", "Sample rate must be a number."),
+            ("7999", "Sample rate must be between 8000 and 48000."),
+        ],
+    )
+    def test_number_field_rejects_invalid_input(
+        self,
+        dialog: SettingsDialog,
+        value: str,
+        message: str,
+    ) -> None:
+        dialog._sample_rate_edit.setText(value)
+
+        with pytest.raises(ValueError, match=message):
+            dialog.current_config()
+
+    def test_invalid_initial_asr_format_is_not_silently_rewritten(self, qtbot) -> None:
+        config = _sample_config()
+        config.asr.asr_format = "flac"
+        dialog = SettingsDialog(
+            config,
+            dashscope_api_key="",
+            deepseek_api_key="",
+        )
+        qtbot.addWidget(dialog)
+
+        assert dialog._asr_format_group.checkedId() == -1
+        with pytest.raises(ValueError, match="ASR audio format is required."):
+            dialog.current_config()
+
+    def test_asr_format_rejects_out_of_range_checked_id(
+        self,
+        dialog: SettingsDialog,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(dialog._asr_format_group, "checkedId", lambda: 999)
+
+        with pytest.raises(ValueError, match="ASR audio format is required."):
+            dialog.current_config()
+
     def test_accept_saves_config_and_emits_signals(
         self,
         qtbot,
